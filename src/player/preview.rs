@@ -6,8 +6,8 @@
 use super::mpv::{Mpv, MpvEvent};
 use crate::api::streams;
 use crate::store;
-use gpui_kit::*;
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -48,7 +48,16 @@ pub struct PreviewSlot(pub Rc<Cell<Option<Bounds<Pixels>>>>);
 impl Global for PreviewSlot {}
 
 pub fn init(cx: &mut App) {
-    let e = cx.new(|_| Preview { mpv: None, id: None, frame: None, old: Vec::new(), serial: 0, pos: 0.0, dur: 0.0, ready: false });
+    let e = cx.new(|_| Preview {
+        mpv: None,
+        id: None,
+        frame: None,
+        old: Vec::new(),
+        serial: 0,
+        pos: 0.0,
+        dur: 0.0,
+        ready: false,
+    });
     cx.set_global(PreviewHandle(e));
     cx.set_global(PreviewSlot::default());
 }
@@ -137,7 +146,9 @@ pub fn stop(cx: &mut App) {
     });
     // no preview for a while: close the preview player to give its memory back
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(Duration::from_secs(20)).await;
+        cx.background_executor()
+            .timer(Duration::from_secs(20))
+            .await;
         let _ = cx.update(|cx| {
             preview(cx).update(cx, |p, _| {
                 if p.serial == serial {
@@ -256,7 +267,9 @@ impl Preview {
 
     fn start(&mut self, info: &crate::api::types::StreamInfo, cx: &mut Context<Self>) {
         let src = if info.hls_only {
-            info.hls_url.as_deref().map(|u| crate::player::proxy::local_hls(u, 360, None))
+            info.hls_url
+                .as_deref()
+                .map(|u| crate::player::proxy::local_hls(u, 360, None))
         } else if info.is_live || (info.video.is_empty() && info.muxed.is_empty()) {
             info.hls_url.clone()
         } else {
@@ -271,7 +284,8 @@ impl Preview {
         let Some(m) = self.ensure_mpv(cx) else { return };
         self.ready = false;
         // The loadfile options moved from the third to the fourth argument in mpv 0.38.
-        let _ = m.command(&["loadfile", &src, "replace", "-1", "pause=no"])
+        let _ = m
+            .command(&["loadfile", &src, "replace", "-1", "pause=no"])
             .or_else(|_| m.command(&["loadfile", &src, "replace", "pause=no"]));
     }
 
@@ -287,8 +301,12 @@ impl Preview {
         if self.id.is_none() {
             return;
         }
-        let Some(buf) = image::RgbaImage::from_raw(f.width, f.height, f.data) else { return };
-        let img = Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(buf)]));
+        let Some(buf) = image::RgbaImage::from_raw(f.width, f.height, f.data) else {
+            return;
+        };
+        let img = Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(
+            buf
+        )]));
         let first = self.frame.is_none();
         if let Some(old) = self.frame.replace(img) {
             self.old.push(old);
@@ -316,7 +334,11 @@ impl PreviewView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let preview = preview(cx);
         let sub = cx.observe(&preview, |_, _, cx| cx.notify());
-        Self { preview, scrubbing: false, _sub: sub }
+        Self {
+            preview,
+            scrubbing: false,
+            _sub: sub,
+        }
     }
 
     /// Fraction of the thumbnail's width at the pointer.
@@ -335,85 +357,121 @@ impl PreviewView {
 
 fn clock(secs: f64) -> String {
     let s = secs.max(0.0) as u64;
-    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
 }
 
 impl Render for PreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let radius = px(12. * store::settings_snapshot().thumb_radius / 12.);
-        let accent = cx.try_global::<crate::ui::Pal>().map(|p| p.accent).unwrap_or(red());
+        let accent = cx
+            .try_global::<crate::ui::Pal>()
+            .map(|p| p.accent)
+            .unwrap_or(red());
         let (frame, pos, dur) = {
             let p = self.preview.read(cx);
             (p.frame.clone(), p.pos, p.dur)
         };
-        let frac = if dur > 0.0 { (pos / dur).clamp(0.0, 1.0) as f32 } else { 0.0 };
+        let frac = if dur > 0.0 {
+            (pos / dur).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
         let scrubbing = self.scrubbing;
-        let fade_id = SharedString::from(format!("preview-in-{}", self.preview.read(cx).id.clone().unwrap_or_default()));
-        let el = div().id("preview").group("preview").relative().size_full().rounded(radius).overflow_hidden().when_some(frame, |d, f| {
-            d.bg(black())
-                .child(img(ImageSource::Render(f)).size_full().rounded(radius).object_fit(ObjectFit::Cover))
-                // time left, bottom right (like the duration badge it covers)
-                .when(dur > 0.0, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .right(px(8.))
-                            .bottom(px(14.))
-                            .px_1()
-                            .rounded_sm()
-                            .bg(hsla(0., 0., 0., 0.75))
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(white())
-                            .child(clock(dur - pos)),
+        let fade_id = SharedString::from(format!(
+            "preview-in-{}",
+            self.preview.read(cx).id.clone().unwrap_or_default()
+        ));
+        let el = div()
+            .id("preview")
+            .group("preview")
+            .relative()
+            .size_full()
+            .rounded(radius)
+            .overflow_hidden()
+            .when_some(frame, |d, f| {
+                d.bg(black())
+                    .child(
+                        img(ImageSource::Render(f))
+                            .size_full()
+                            .rounded(radius)
+                            .object_fit(ObjectFit::Cover),
                     )
-                })
-                // seek bar: click or drag to move through the video
-                .when(dur > 0.0, |d| {
-                    d.child(
-                        div()
-                            .id("preview-seek")
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .bottom_0()
-                            .h(px(14.))
-                            .flex()
-                            .items_end()
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.scrubbing = true;
-                                this.seek_to(e.position.x, cx);
-                            }))
-                            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
-                                if this.scrubbing {
-                                    if e.pressed_button == Some(MouseButton::Left) {
+                    // time left, bottom right (like the duration badge it covers)
+                    .when(dur > 0.0, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .right(px(8.))
+                                .bottom(px(14.))
+                                .px_1()
+                                .rounded_sm()
+                                .bg(hsla(0., 0., 0., 0.75))
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(white())
+                                .child(clock(dur - pos)),
+                        )
+                    })
+                    // seek bar: click or drag to move through the video
+                    .when(dur > 0.0, |d| {
+                        d.child(
+                            div()
+                                .id("preview-seek")
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .h(px(14.))
+                                .flex()
+                                .items_end()
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        this.scrubbing = true;
                                         this.seek_to(e.position.x, cx);
-                                    } else {
-                                        this.scrubbing = false;
+                                    }),
+                                )
+                                .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                                    if this.scrubbing {
+                                        if e.pressed_button == Some(MouseButton::Left) {
+                                            this.seek_to(e.position.x, cx);
+                                        } else {
+                                            this.scrubbing = false;
+                                        }
                                     }
-                                }
-                            }))
-                            .on_mouse_up(MouseButton::Left, cx.listener(|this, _: &MouseUpEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.scrubbing = false;
-                                cx.notify();
-                            }))
-                            .on_click(|_, _, cx| cx.stop_propagation())
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(if scrubbing { 6. } else { 4. }))
-                                    .group_hover("preview-seek-g", |s| s.h(px(6.)))
-                                    .bg(hsla(0., 0., 1., 0.35))
-                                    .child(div().h_full().w(relative(frac)).bg(accent)),
-                            )
-                            .group("preview-seek-g"),
-                    )
-                })
-        });
-        el.with_animation(fade_id, Animation::new(std::time::Duration::from_millis(200)).with_easing(ease_out_quint()), |d, t| d.opacity(t))
+                                }))
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        this.scrubbing = false;
+                                        cx.notify();
+                                    }),
+                                )
+                                .on_click(|_, _, cx| cx.stop_propagation())
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .h(px(if scrubbing { 6. } else { 4. }))
+                                        .group_hover("preview-seek-g", |s| s.h(px(6.)))
+                                        .bg(hsla(0., 0., 1., 0.35))
+                                        .child(div().h_full().w(relative(frac)).bg(accent)),
+                                )
+                                .group("preview-seek-g"),
+                        )
+                    })
+            });
+        el.with_animation(
+            fade_id,
+            Animation::new(std::time::Duration::from_millis(200)).with_easing(ease_out_quint()),
+            |d, t| d.opacity(t),
+        )
     }
 }
 

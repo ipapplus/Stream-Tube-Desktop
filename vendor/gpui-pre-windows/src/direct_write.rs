@@ -515,6 +515,17 @@ impl DirectWriteState {
                 if let Some(ref fallbacks) = font_info.fallbacks {
                     format.SetFontFallback(fallbacks)?;
                 }
+                // Stream Tube patch: resolve neutrals and Latin spans in the
+                // paragraph's own direction, keeping its physical origin at x=0.
+                if !text.is_ascii()
+                    && unicode_bidi::BidiInfo::new(text, None)
+                        .paragraphs
+                        .first()
+                        .is_some_and(|paragraph| paragraph.level.is_rtl())
+                {
+                    format.SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT)?;
+                    format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+                }
 
                 let layout = components.factory.CreateTextLayout(
                     text_wide,
@@ -588,6 +599,8 @@ impl DirectWriteState {
                 0.0,
             )?;
             let width = px(renderer_context.width);
+            // Draw callbacks can arrive out of visual order in an RTL paragraph.
+            runs.sort_by(|a, b| a.glyphs[0].position.x.as_f32().total_cmp(&b.glyphs[0].position.x.as_f32()));
 
             Ok(LineLayout {
                 font_size,
@@ -1290,7 +1303,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     fn DrawGlyphRun(
         &self,
         clientdrawingcontext: *const ::core::ffi::c_void,
-        _baselineoriginx: f32,
+        baselineoriginx: f32,
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
@@ -1425,12 +1438,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
             let mut utf16_idx = desc.textPosition as usize;
             let mut glyph_idx = 0;
-            // DirectWrite returns right-to-left glyphs in logical order. Keep the
-            // logical character index with each glyph, then reverse the glyphs
-            // before assigning positions in visual (left-to-right) order. Using
-            // `baselineoriginx` for a RTL run puts the whole run to the left of
-            // its layout bounds, which is why Arabic titles were clipped to a
-            // single trailing glyph in card views.
+            // Keep each glyph's logical byte index. DirectWrite supplies the
+            // right edge as a bidi run's origin when its level is odd.
             struct TempGlyph {
                 id: GlyphId,
                 index: usize,
@@ -1440,7 +1449,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 ascender_offset: f32,
             }
             let rtl = glyphrun.bidiLevel % 2 == 1;
-            let run_start_x = context.width;
+            let advance = glyph_advances.iter().sum::<f32>();
+            let run_start_x = if rtl { baselineoriginx - advance } else { baselineoriginx };
             let mut temp_glyphs = Vec::with_capacity(glyph_count);
             for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
                 context.index_converter.advance_to_utf16_ix(utf16_idx);
@@ -1462,10 +1472,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                         advance_offset: glyph_offsets[this_glyph_idx].advanceOffset,
                         ascender_offset: glyph_offsets[this_glyph_idx].ascenderOffset,
                     });
-                    context.width += glyph_advances[this_glyph_idx];
                 }
                 glyph_idx += cluster_glyph_count;
             }
+            context.width += advance;
             if rtl {
                 temp_glyphs.reverse();
             }
@@ -1883,6 +1893,26 @@ mod tests {
         indices.dedup();
         assert_eq!(indices, text.char_indices().map(|(i, _)| i).collect::<Vec<_>>(), "{g:?}");
         assert!(x_of(&g, 0) > x_of(&g, 5) && x_of(&g, 5) > x_of(&g, 8), "{g:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_arabic_paragraph_keeps_brand_and_date_in_reading_order() -> Result<()> {
+        let system = DirectWriteTextSystem::new()?;
+        let font = Font { family: "Segoe UI".into(), ..Default::default() };
+        let font_id = system.font_id(&font)?;
+        let text = "مشاهدة YouTube: \u{2066}14/08/2026\u{2069}";
+        let layout = system.layout_line(text, px(16.0), &[gpui::FontRun { len: text.len(), font_id }]);
+        let x = |index| layout.runs.iter().flat_map(|run| &run.glyphs)
+            .find(|glyph| glyph.index == index).unwrap().position.x;
+        let brand = text.find("YouTube").unwrap();
+        let date = text.find("14/08/2026").unwrap();
+        assert!(x(0) > x(brand + 6));
+        assert!(x(brand) < x(brand + 6));
+        assert!(x(date) < x(date + 3) && x(date + 3) < x(date + 6));
+        // The whole Latin span reads forward: brand, then the isolated date.
+        assert!(x(brand) < x(date + 9), "{:?}", layout.runs.iter().map(|r| r.glyphs.iter().map(|g| (g.index, g.position.x)).collect::<Vec<_>>()).collect::<Vec<_>>());
+        assert!(x(0) > x(date + 9), "{:?}", layout.runs.iter().map(|r| r.glyphs.iter().map(|g| (g.index, g.position.x)).collect::<Vec<_>>()).collect::<Vec<_>>());
         Ok(())
     }
 

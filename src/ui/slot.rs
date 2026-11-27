@@ -59,8 +59,20 @@ impl SlotFollower {
     /// Follows any slot (e.g. the thumbnail being previewed).
     pub fn with_slot(slot: Rc<Cell<Option<Bounds<Pixels>>>>, content: impl IntoElement) -> Self {
         let laid_size = slot.get().map(|b| b.size);
-        let child = laid_size.map(|s| div().w(s.width).h(s.height).child(content).into_any_element());
-        Self { slot, child, laid_size, can_paint: false, clip: None }
+        let child = laid_size.map(|s| {
+            div()
+                .w(s.width)
+                .h(s.height)
+                .child(content)
+                .into_any_element()
+        });
+        Self {
+            slot,
+            child,
+            laid_size,
+            can_paint: false,
+            clip: None,
+        }
     }
 
     /// Draws only inside the bounds `clip` holds (when it holds any).
@@ -70,7 +82,10 @@ impl SlotFollower {
     }
 
     fn mask(&self) -> Option<ContentMask<Pixels>> {
-        self.clip.as_ref().and_then(|c| c.get()).map(|bounds| ContentMask { bounds })
+        self.clip
+            .as_ref()
+            .and_then(|c| c.get())
+            .map(|bounds| ContentMask { bounds })
     }
 }
 
@@ -104,7 +119,12 @@ impl Element for SlotFollower {
         style.position = Position::Absolute;
         style.inset.top = px(0.).into();
         style.inset.left = px(0.).into();
-        let children: Vec<LayoutId> = self.child.as_mut().map(|c| c.request_layout(window, cx)).into_iter().collect();
+        let children: Vec<LayoutId> = self
+            .child
+            .as_mut()
+            .map(|c| c.request_layout(window, cx))
+            .into_iter()
+            .collect();
         (window.request_layout(style, children, cx), ())
     }
 
@@ -139,7 +159,9 @@ impl Element for SlotFollower {
         let mask = self.mask();
         if let Some(child) = self.child.as_mut() {
             let offset = slot.origin - bounds.origin;
-            window.with_content_mask(mask, |window| window.with_element_offset(offset, |window| child.prepaint(window, cx)));
+            window.with_content_mask(mask, |window| {
+                window.with_element_offset(offset, |window| child.prepaint(window, cx))
+            });
             self.can_paint = true;
         }
     }

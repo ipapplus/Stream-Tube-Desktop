@@ -187,7 +187,10 @@ impl Watch {
         );
         let referer = format!("https://www.youtube.com/watch?v={}", self.id);
         let account_headers = self.account.ping_headers()?;
-        let mut headers: Vec<(&str, &str)> = account_headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let mut headers: Vec<(&str, &str)> = account_headers
+            .iter()
+            .map(|(k, v)| (*k, v.as_str()))
+            .collect();
         headers.push(("Referer", referer.as_str()));
         headers.push(("Origin", ORIGIN));
         let send = || {
@@ -461,7 +464,9 @@ impl PlaybackReport {
     /// newer position from another device than this one would report.
     pub fn abandon(self) {
         if self.started {
-            let _ = reporter().send(Event::Abandon { serial: self.serial });
+            let _ = reporter().send(Event::Abandon {
+                serial: self.serial,
+            });
         }
     }
 
@@ -490,15 +495,30 @@ mod live_tests {
     fn reports_to_the_account() {
         let id = std::env::var("VID").unwrap_or_else(|_| "aqz-KE-bpKQ".into());
         let account = Account::current().expect("a signed-in account");
-        let start = Start { account: account.clone(), recording_revision: crate::store::history_recording_revision().unwrap_or(0), id: id.clone(), serial: 1, len: 600.0, position: 3.0 };
+        let start = Start {
+            account: account.clone(),
+            recording_revision: crate::store::history_recording_revision().unwrap_or(0),
+            id: id.clone(),
+            serial: 1,
+            len: 600.0,
+            position: 3.0,
+        };
         let mut w = Watch::begin(&start).expect("playback ping");
         std::thread::sleep(Duration::from_secs(2));
         w.report(9.0, true, false).expect("watchtime ping");
         w.report(12.0, false, true).expect("final ping");
         let page = account.page(None).expect("history page");
-        let first: Vec<_> = page.entries.iter().take(3).map(|e| (e.video.id.clone(), e.progress.map(|p| p.seconds))).collect();
+        let first: Vec<_> = page
+            .entries
+            .iter()
+            .take(3)
+            .map(|e| (e.video.id.clone(), e.progress.map(|p| p.seconds)))
+            .collect();
         println!("history head: {first:?}");
-        assert!(page.entries.iter().take(3).any(|e| e.video.id == id), "watched video not at the top of history");
+        assert!(
+            page.entries.iter().take(3).any(|e| e.video.id == id),
+            "watched video not at the top of history"
+        );
     }
 }
 

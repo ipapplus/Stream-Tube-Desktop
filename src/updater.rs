@@ -3,8 +3,8 @@ use crate::api::http;
 use crate::i18n::tf;
 use crate::store;
 use crate::ui::{blocking, toast};
-use gpui_kit::*;
 use anyhow::{Context as _, Result, anyhow};
+use gpui_kit::*;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -64,7 +64,11 @@ fn parse_version(v: &str) -> (u64, u64, u64, u32, u64) {
     let v = v.trim().trim_start_matches(['v', 'V']);
     let (core, pre) = v.split_once('-').unwrap_or((v, ""));
     let mut n = core.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
-    let (a, b, c) = (n.next().unwrap_or(0), n.next().unwrap_or(0), n.next().unwrap_or(0));
+    let (a, b, c) = (
+        n.next().unwrap_or(0),
+        n.next().unwrap_or(0),
+        n.next().unwrap_or(0),
+    );
     let pre = pre.to_ascii_lowercase();
     let stage = if pre.is_empty() {
         9
@@ -77,7 +81,12 @@ fn parse_version(v: &str) -> (u64, u64, u64, u32, u64) {
     } else {
         0
     };
-    let num = pre.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
+    let num = pre
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0);
     (a, b, c, stage, num)
 }
 
@@ -102,7 +111,9 @@ fn pick_asset(assets: &[Value]) -> Option<Asset> {
         let url = a.get("browser_download_url")?.as_str()?;
         // only files of this project's releases, saved under a plain file name
         let plain = !name.is_empty() && !name.contains(['/', '\\', ':']) && !name.starts_with('.');
-        let ours = RELEASE_REPOS.iter().any(|repo| url.starts_with(&format!("https://github.com/{repo}/releases/download/")));
+        let ours = RELEASE_REPOS
+            .iter()
+            .any(|repo| url.starts_with(&format!("https://github.com/{repo}/releases/download/")));
         if !plain || !ours {
             return None;
         }
@@ -112,7 +123,12 @@ fn pick_asset(assets: &[Value]) -> Option<Asset> {
             .and_then(|d| d.strip_prefix("sha256:"))
             .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
             .map(str::to_ascii_lowercase);
-        Some(Asset { name: name.to_string(), url: url.to_string(), size: a.get("size").and_then(Value::as_u64).unwrap_or(0), sha256 })
+        Some(Asset {
+            name: name.to_string(),
+            url: url.to_string(),
+            size: a.get("size").and_then(Value::as_u64).unwrap_or(0),
+            sha256,
+        })
     })
 }
 
@@ -135,25 +151,44 @@ pub(crate) fn file_sha256(path: &std::path::Path) -> Result<String> {
 
 /// The newest published release, if it is newer than this build.
 pub fn check() -> Result<Option<Release>> {
-    let v = http::get_json(&format!("https://api.github.com/repos/{REPO}/releases?per_page=15"))?;
-    let list = v.as_array().ok_or_else(|| anyhow!("unexpected reply from GitHub"))?;
+    let v = http::get_json(&format!(
+        "https://api.github.com/repos/{REPO}/releases?per_page=15"
+    ))?;
+    let list = v
+        .as_array()
+        .ok_or_else(|| anyhow!("unexpected reply from GitHub"))?;
     let newest = list
         .iter()
         .filter(|r| !r.get("draft").and_then(Value::as_bool).unwrap_or(false))
         .filter_map(|r| Some((r.get("tag_name")?.as_str()?.to_string(), r)))
         .max_by(|a, b| parse_version(&a.0).cmp(&parse_version(&b.0)));
-    let Some((tag, r)) = newest else { return Ok(None) };
+    let Some((tag, r)) = newest else {
+        return Ok(None);
+    };
     if !is_newer(&tag, current_version()) {
         return Ok(None);
     }
-    let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    let s = |k: &str| {
+        r.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
     Ok(Some(Release {
-        name: Some(s("name")).filter(|n| !n.is_empty()).unwrap_or_else(|| tag.clone()),
+        name: Some(s("name"))
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| tag.clone()),
         tag,
         notes: s("body"),
         page: s("html_url"),
-        prerelease: r.get("prerelease").and_then(Value::as_bool).unwrap_or(false),
-        asset: r.get("assets").and_then(Value::as_array).and_then(|a| pick_asset(a)),
+        prerelease: r
+            .get("prerelease")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        asset: r
+            .get("assets")
+            .and_then(Value::as_array)
+            .and_then(|a| pick_asset(a)),
     }))
 }
 
@@ -165,7 +200,11 @@ fn set_status(st: Status, cx: &mut App) {
 /// Checks GitHub. `manual` reports "up to date" and errors; the startup check stays
 /// quiet unless there is something new (and not skipped).
 pub fn check_now(manual: bool, cx: &mut App) {
-    if matches!(cx.default_global::<Updates>().status, Status::Downloading(_, _)) || BUSY.swap(true, Ordering::SeqCst) {
+    if matches!(
+        cx.default_global::<Updates>().status,
+        Status::Downloading(_, _)
+    ) || BUSY.swap(true, Ordering::SeqCst)
+    {
         return;
     }
     set_status(Status::Checking, cx);
@@ -183,11 +222,21 @@ pub fn check_now(manual: bool, cx: &mut App) {
             Ok(None) => {
                 set_status(Status::UpToDate, cx);
                 if manual {
-                    toast(cx, tf!("Stream Tube {0} is the latest version", current_version()));
+                    toast(
+                        cx,
+                        tf!("Stream Tube {0} is the latest version", current_version()),
+                    );
                 }
             }
             Err(e) => {
-                set_status(if manual { Status::Error(e.to_string()) } else { Status::Idle }, cx);
+                set_status(
+                    if manual {
+                        Status::Error(e.to_string())
+                    } else {
+                        Status::Idle
+                    },
+                    cx,
+                );
                 if manual {
                     toast(cx, tf!("Could not check for updates: {0}", e));
                 }
@@ -203,15 +252,22 @@ pub fn check_on_startup(cx: &mut App) {
         return;
     }
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(std::time::Duration::from_secs(6)).await;
+        cx.background_executor()
+            .timer(std::time::Duration::from_secs(6))
+            .await;
         let _ = cx.update(|cx| check_now(false, cx));
     })
     .detach();
 }
 
 fn show_dialog(cx: &mut App) {
-    if let Some(w) = cx.active_window().or_else(|| cx.windows().into_iter().next()) {
-        let _ = w.update(cx, |_, window, cx| crate::ui::app::open_dialog(crate::ui::app::Dialog::Update, window, cx));
+    if let Some(w) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    {
+        let _ = w.update(cx, |_, window, cx| {
+            crate::ui::app::open_dialog(crate::ui::app::Dialog::Update, window, cx)
+        });
     }
 }
 
@@ -228,7 +284,13 @@ pub fn install(cx: &mut App) {
         Status::Available(r) => r.clone(),
         _ => return,
     };
-    let Some(Asset { name, url, size, sha256 }) = rel.asset.clone().filter(|_| cfg!(windows)) else {
+    let Some(Asset {
+        name,
+        url,
+        size,
+        sha256,
+    }) = rel.asset.clone().filter(|_| cfg!(windows))
+    else {
         // no installer for this platform: the release page has the downloads
         let _ = open::that(&rel.page);
         return;
@@ -236,7 +298,8 @@ pub fn install(cx: &mut App) {
     set_status(Status::Downloading(rel.clone(), 0.0), cx);
     let progress = std::sync::Arc::new(parking_lot::Mutex::new(0.0f32));
     let p2 = progress.clone();
-    let result: std::sync::Arc<parking_lot::Mutex<Option<Result<std::path::PathBuf>>>> = Default::default();
+    let result: std::sync::Arc<parking_lot::Mutex<Option<Result<std::path::PathBuf>>>> =
+        Default::default();
     let r2 = result.clone();
     std::thread::spawn(move || {
         let res = (|| -> Result<std::path::PathBuf> {
@@ -259,7 +322,9 @@ pub fn install(cx: &mut App) {
             // the installer runs only if it is exactly the file GitHub has on the release
             let Some(want) = sha256 else {
                 let _ = std::fs::remove_file(&path);
-                anyhow::bail!("GitHub gave no checksum for the installer. Download it from the releases page");
+                anyhow::bail!(
+                    "GitHub gave no checksum for the installer. Download it from the releases page"
+                );
             };
             if file_sha256(&path)? != want {
                 let _ = std::fs::remove_file(&path);
@@ -271,7 +336,9 @@ pub fn install(cx: &mut App) {
     });
     cx.spawn(async move |cx| {
         let res = loop {
-            cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
             if let Some(r) = result.lock().take() {
                 break r;
             }
@@ -290,9 +357,19 @@ pub fn install(cx: &mut App) {
     .detach();
 }
 
-fn installer_command(path: &std::path::Path, executable: Option<&std::path::Path>) -> std::process::Command {
+fn installer_command(
+    path: &std::path::Path,
+    executable: Option<&std::path::Path>,
+) -> std::process::Command {
     let mut command = std::process::Command::new(path);
-    command.args(["/SP-", "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"]);
+    command.args([
+        "/SP-",
+        "/SILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/CLOSEAPPLICATIONS",
+        "/RESTARTAPPLICATIONS",
+    ]);
     if let Some(dir) = executable.and_then(portable_dir) {
         let mut destination = std::ffi::OsString::from("/DIR=");
         destination.push(dir);
@@ -305,7 +382,8 @@ fn portable_dir(executable: &std::path::Path) -> Option<&std::path::Path> {
     let dir = executable.parent()?;
     let name = executable.file_name()?.to_str()?;
     let portable = dir.join("streamtube.portable").is_file() || dir.join("README.md").is_file();
-    (name.eq_ignore_ascii_case("streamtube.exe") && portable && dir.join("libmpv-2.dll").is_file()).then_some(dir)
+    (name.eq_ignore_ascii_case("streamtube.exe") && portable && dir.join("libmpv-2.dll").is_file())
+        .then_some(dir)
 }
 
 fn run_installer(path: &std::path::Path, rel: Release, cx: &mut App) {
@@ -335,7 +413,11 @@ mod tests {
         let executable = dir.join("streamtube.exe");
         let setup = std::path::Path::new("update-setup.exe");
         std::fs::write(dir.join("libmpv-2.dll"), []).unwrap();
-        assert!(!installer_command(setup, Some(&executable)).get_args().any(|arg| arg == "/PORTABLEUPDATE=1"));
+        assert!(
+            !installer_command(setup, Some(&executable))
+                .get_args()
+                .any(|arg| arg == "/PORTABLEUPDATE=1")
+        );
 
         // ZIPs released before the marker shipped include the README.
         std::fs::write(dir.join("README.md"), []).unwrap();
@@ -357,16 +439,40 @@ mod tests {
 
     #[test]
     fn assets_come_from_this_repo_with_a_checksum() {
-        let ext = if cfg!(windows) { "setup.exe" } else { "linux-x86_64.tar.gz" };
-        let asset = |name: &str, url: &str| {
-            serde_json::json!({ "name": name, "browser_download_url": url, "size": 5, "digest": format!("sha256:{}", "AB".repeat(32)) })
+        let ext = if cfg!(windows) {
+            "setup.exe"
+        } else {
+            "linux-x86_64.tar.gz"
         };
+        let asset = |name: &str, url: &str| serde_json::json!({ "name": name, "browser_download_url": url, "size": 5, "digest": format!("sha256:{}", "AB".repeat(32)) });
         let good = format!("StreamTube-1.0.0-{ext}");
-        let ok = pick_asset(&[asset(&good, &format!("https://github.com/{}/releases/download/v1.0.0/{good}", super::REPO))]).unwrap();
+        let ok = pick_asset(&[asset(
+            &good,
+            &format!(
+                "https://github.com/{}/releases/download/v1.0.0/{good}",
+                super::REPO
+            ),
+        )])
+        .unwrap();
         assert_eq!(ok.sha256.as_deref(), Some("ab".repeat(32).as_str()));
         // another repository, or a name that is a path
-        assert!(pick_asset(&[asset(&good, &format!("https://github.com/someone/else/releases/download/v1.0.0/{good}"))]).is_none());
-        assert!(pick_asset(&[asset(&format!("..\\{good}"), &format!("https://github.com/{}/releases/download/v1.0.0/x", super::REPO))]).is_none());
+        assert!(
+            pick_asset(&[asset(
+                &good,
+                &format!("https://github.com/someone/else/releases/download/v1.0.0/{good}")
+            )])
+            .is_none()
+        );
+        assert!(
+            pick_asset(&[asset(
+                &format!("..\\{good}"),
+                &format!(
+                    "https://github.com/{}/releases/download/v1.0.0/x",
+                    super::REPO
+                )
+            )])
+            .is_none()
+        );
         // the organization the project is moving to, but not names that only start the same
         assert!(pick_asset(&[asset(&good, &format!("https://github.com/StreamTubeProject/Stream-Tube-Desktop/releases/download/v1.0.0/{good}"))]).is_some());
         assert!(pick_asset(&[asset(&good, &format!("https://github.com/StreamTubeProject/Stream-Tube-Desktop-fork/releases/download/v1.0.0/{good}"))]).is_none());

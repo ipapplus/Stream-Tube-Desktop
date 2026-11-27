@@ -58,20 +58,32 @@ impl Annotation {
 fn url_for(video_id: &str) -> String {
     let first = &video_id[..1];
     // the archive keeps ids that start with "-" in a differently named folder
-    let dir = if first == "-" { "-/ar-".to_string() } else { first.to_string() };
+    let dir = if first == "-" {
+        "-/ar-".to_string()
+    } else {
+        first.to_string()
+    };
     format!("{ARCHIVE}/{dir}/{}/{video_id}.xml.gz", &video_id[..3])
 }
 
 /// The archived annotations of a video; empty when it never had any.
 pub fn fetch(video_id: &str) -> Result<Vec<Annotation>> {
-    if video_id.len() != 11 || !video_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if video_id.len() != 11
+        || !video_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(anyhow!("not a video id"));
     }
     // served with Content-Encoding: gzip, which the HTTP client decodes
     let bytes = match http::get_bytes(&url_for(video_id), &[]) {
         Ok(b) => b,
         // the archive answers 404 (or 403) for videos it has nothing for
-        Err(e) if e.to_string().starts_with("HTTP 404 ") || e.to_string().starts_with("HTTP 403 ") => return Ok(Vec::new()),
+        Err(e)
+            if e.to_string().starts_with("HTTP 404 ") || e.to_string().starts_with("HTTP 403 ") =>
+        {
+            return Ok(Vec::new());
+        }
         Err(e) => return Err(e),
     };
     Ok(parse(&String::from_utf8_lossy(&bytes), video_id))
@@ -90,13 +102,22 @@ struct Node {
 
 impl Node {
     fn attr(&self, k: &str) -> Option<&str> {
-        self.attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
+        self.attrs
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.as_str())
     }
     fn child(&self, name: &str) -> Option<&Node> {
         self.children.iter().find(|c| c.name == name)
     }
     fn find(&self, name: &str) -> Option<&Node> {
-        self.children.iter().find_map(|c| if c.name == name { Some(c) } else { c.find(name) })
+        self.children.iter().find_map(|c| {
+            if c.name == name {
+                Some(c)
+            } else {
+                c.find(name)
+            }
+        })
     }
 }
 
@@ -121,7 +142,11 @@ fn unescape(s: &str) -> String {
             "gt" => Some('>'),
             "quot" => Some('"'),
             "apos" => Some('\''),
-            _ if ent.starts_with("#x") || ent.starts_with("#X") => u32::from_str_radix(&ent[2..], 16).ok().and_then(char::from_u32),
+            _ if ent.starts_with("#x") || ent.starts_with("#X") => {
+                u32::from_str_radix(&ent[2..], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+            }
             _ if ent.starts_with('#') => ent[1..].parse().ok().and_then(char::from_u32),
             _ => None,
         };
@@ -203,14 +228,19 @@ fn parse_xml(s: &str) -> Node {
         let self_closing = tag.ends_with('/');
         let tag = tag.trim_end_matches('/');
         let name_end = tag.find(|c: char| c.is_whitespace()).unwrap_or(tag.len());
-        let mut node = Node { name: tag[..name_end].to_string(), ..Default::default() };
+        let mut node = Node {
+            name: tag[..name_end].to_string(),
+            ..Default::default()
+        };
         let mut a = &tag[name_end..];
         loop {
             a = a.trim_start();
             let Some(eq) = a.find('=') else { break };
             let key = a[..eq].trim().to_string();
             let v = a[eq + 1..].trim_start();
-            let Some(q) = v.chars().next().filter(|c| *c == '"' || *c == '\'') else { break };
+            let Some(q) = v.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+                break;
+            };
             let Some(close) = v[1..].find(q) else { break };
             node.attrs.push((key, unescape(&v[1..1 + close])));
             a = &v[close + 2..];
@@ -244,7 +274,9 @@ fn parse_time(t: &str) -> Option<f64> {
 
 /// "#t=1m30s", "t=90" in seconds.
 fn url_time(url: &str) -> Option<f64> {
-    let t = url.split(['#', '&', '?']).find_map(|p| p.strip_prefix("t="))?;
+    let t = url
+        .split(['#', '&', '?'])
+        .find_map(|p| p.strip_prefix("t="))?;
     if let Ok(s) = t.trim_end_matches('s').parse::<f64>() {
         return Some(s);
     }
@@ -255,7 +287,13 @@ fn url_time(url: &str) -> Option<f64> {
             'h' | 'm' | 's' => {
                 let n: f64 = num.parse().ok()?;
                 num.clear();
-                total += n * if c == 'h' { 3600.0 } else if c == 'm' { 60.0 } else { 1.0 };
+                total += n * if c == 'h' {
+                    3600.0
+                } else if c == 'm' {
+                    60.0
+                } else {
+                    1.0
+                };
             }
             _ => return None,
         }
@@ -281,20 +319,33 @@ fn action_for(url: &str, video_id: &str) -> Option<Action> {
             return Some(Action::Web(http::urldecode(q)));
         }
     }
-    let host = url.split("://").nth(1).unwrap_or("").split(['/', '?', '#']).next().unwrap_or("").to_lowercase();
+    let host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or("")
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
     let youtube = host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com");
     if !youtube {
         return Some(Action::Web(url));
     }
-    let target = url.split(['?', '&', '#']).find_map(|kv| kv.strip_prefix("v="));
-    if target == Some(video_id) || (target.is_none() && url.contains(&format!("youtu.be/{video_id}"))) {
+    let target = url
+        .split(['?', '&', '#'])
+        .find_map(|kv| kv.strip_prefix("v="));
+    if target == Some(video_id)
+        || (target.is_none() && url.contains(&format!("youtu.be/{video_id}")))
+    {
         return Some(Action::Seek(url_time(&url).unwrap_or(0.0)));
     }
     Some(Action::YouTube(url))
 }
 
 fn color(v: Option<&str>, default: u32) -> u32 {
-    v.and_then(|c| c.trim().parse::<u64>().ok()).map(|c| (c & 0xFF_FFFF) as u32).unwrap_or(default)
+    v.and_then(|c| c.trim().parse::<u64>().ok())
+        .map(|c| (c & 0xFF_FFFF) as u32)
+        .unwrap_or(default)
 }
 
 fn parse_annotation(n: &Node, video_id: &str) -> Option<Annotation> {
@@ -308,13 +359,23 @@ fn parse_annotation(n: &Node, video_id: &str) -> Option<Annotation> {
     let segment = n.find("segment")?;
     let region = segment.find("movingRegion")?;
     let rtype = region.attr("type").unwrap_or("rect");
-    let regions: Vec<&Node> = region.children.iter().filter(|c| c.name == format!("{rtype}Region") || c.name.ends_with("Region")).collect();
+    let regions: Vec<&Node> = region
+        .children
+        .iter()
+        .filter(|c| c.name == format!("{rtype}Region") || c.name.ends_with("Region"))
+        .collect();
     let first = regions.first()?;
     let last = regions.last()?;
     let num = |k: &str| first.attr(k).and_then(|v| v.parse::<f32>().ok());
     let (x, y, w, h) = (num("x")?, num("y")?, num("w")?, num("h")?);
-    let rollover_of = segment.attr("spaceRelative").filter(|_| style == "highlightText").map(str::to_string);
-    let (start, end) = match (parse_time(first.attr("t").unwrap_or("")), parse_time(last.attr("t").unwrap_or(""))) {
+    let rollover_of = segment
+        .attr("spaceRelative")
+        .filter(|_| style == "highlightText")
+        .map(str::to_string);
+    let (start, end) = match (
+        parse_time(first.attr("t").unwrap_or("")),
+        parse_time(last.attr("t").unwrap_or("")),
+    ) {
         (Some(s), Some(e)) => (s, e.max(s)),
         // "never": only shown through its highlight
         _ if rollover_of.is_some() => (0.0, 0.0),
@@ -322,7 +383,10 @@ fn parse_annotation(n: &Node, video_id: &str) -> Option<Annotation> {
     };
     let app = n.child("appearance");
     let a = |k: &str| app.and_then(|a| a.attr(k));
-    let text = n.find("TEXT").map(|t| t.text.trim_matches(['\n', '\r']).to_string()).unwrap_or_default();
+    let text = n
+        .find("TEXT")
+        .map(|t| t.text.trim_matches(['\n', '\r']).to_string())
+        .unwrap_or_default();
     let action = n
         .children
         .iter()
@@ -337,7 +401,11 @@ fn parse_annotation(n: &Node, video_id: &str) -> Option<Annotation> {
         (_, "title") => (0x00_0000, 0.0, 0xFFFFFF),
         _ => (0xFF_FFFF, 0.8, 0x000000),
     };
-    let fg_key = if style == "highlightText" { "highlightFontColor" } else { "fgColor" };
+    let fg_key = if style == "highlightText" {
+        "highlightFontColor"
+    } else {
+        "fgColor"
+    };
     Some(Annotation {
         id: n.attr("id").unwrap_or("").to_string(),
         kind,
@@ -349,9 +417,15 @@ fn parse_annotation(n: &Node, video_id: &str) -> Option<Annotation> {
         start,
         end,
         bg: color(a("bgColor"), bg_default),
-        bg_alpha: a("bgAlpha").or(a("borderAlpha").filter(|_| style.is_empty())).and_then(|v| v.parse().ok()).unwrap_or(alpha_default),
+        bg_alpha: a("bgAlpha")
+            .or(a("borderAlpha").filter(|_| style.is_empty()))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(alpha_default),
         fg: color(a(fg_key).or(a("fgColor")), fg_default),
-        text_size: a("textSize").and_then(|v| v.parse().ok()).filter(|s: &f32| *s > 0.0).unwrap_or(3.15),
+        text_size: a("textSize")
+            .and_then(|v| v.parse().ok())
+            .filter(|s: &f32| *s > 0.0)
+            .unwrap_or(3.15),
         action,
         rollover_of,
         style,
@@ -361,7 +435,9 @@ fn parse_annotation(n: &Node, video_id: &str) -> Option<Annotation> {
 /// The annotations of a file, in drawing order.
 pub fn parse(xml: &str, video_id: &str) -> Vec<Annotation> {
     let doc = parse_xml(xml);
-    let Some(list) = doc.find("annotations") else { return Vec::new() };
+    let Some(list) = doc.find("annotations") else {
+        return Vec::new();
+    };
     let mut out: Vec<Annotation> = list
         .children
         .iter()
@@ -371,7 +447,11 @@ pub fn parse(xml: &str, video_id: &str) -> Vec<Annotation> {
         .filter(|a| a.kind == Kind::Highlight || !a.text.trim().is_empty() || a.action.is_some())
         .collect();
     // rollover text is placed relative to its highlight
-    let highlights: Vec<(String, f32, f32)> = out.iter().filter(|a| a.kind == Kind::Highlight).map(|a| (a.id.clone(), a.x, a.y)).collect();
+    let highlights: Vec<(String, f32, f32)> = out
+        .iter()
+        .filter(|a| a.kind == Kind::Highlight)
+        .map(|a| (a.id.clone(), a.x, a.y))
+        .collect();
     out.retain_mut(|a| match &a.rollover_of {
         Some(parent) => match highlights.iter().find(|(id, ..)| id == parent) {
             Some((_, px, py)) => {
@@ -433,7 +513,10 @@ Thanks</TEXT>
     #[test]
     fn parses_annotations() {
         let a = parse(SAMPLE, "abcdefghijk");
-        assert_eq!(a.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["hl1", "tx1", "p1", "w1"]);
+        assert_eq!(
+            a.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+            ["hl1", "tx1", "p1", "w1"]
+        );
         let hl = &a[0];
         assert_eq!(hl.kind, Kind::Highlight);
         assert_eq!((hl.start, hl.end), (60.5, 90.0));
@@ -449,17 +532,31 @@ Thanks</TEXT>
         assert_eq!((p.bg, p.fg), (0, 0xFFFFFF));
         assert!((p.bg_alpha - 0.6).abs() < 1e-6);
         assert!(p.visible_at(7.0) && !p.visible_at(10.0) && !p.visible_at(4.0));
-        assert_eq!(p.action, Some(Action::YouTube("https://www.youtube.com/watch?v=zzzzzzzzzzz&feature=iv".into())));
+        assert_eq!(
+            p.action,
+            Some(Action::YouTube(
+                "https://www.youtube.com/watch?v=zzzzzzzzzzz&feature=iv".into()
+            ))
+        );
         let w = &a[3];
         assert_eq!(w.style, "speech");
         assert_eq!((w.bg, w.fg, w.text_size), (0xFFFFFF, 0, 3.15));
-        assert_eq!(w.action, Some(Action::Web("http://example.org/page?x=1".into())));
+        assert_eq!(
+            w.action,
+            Some(Action::Web("http://example.org/page?x=1".into()))
+        );
     }
 
     #[test]
     fn archive_paths() {
-        assert_eq!(url_for("6Uwd5w1AwYU"), format!("{ARCHIVE}/6/6Uw/6Uwd5w1AwYU.xml.gz"));
-        assert_eq!(url_for("-abcdefghij"), format!("{ARCHIVE}/-/ar-/-ab/-abcdefghij.xml.gz"));
+        assert_eq!(
+            url_for("6Uwd5w1AwYU"),
+            format!("{ARCHIVE}/6/6Uw/6Uwd5w1AwYU.xml.gz")
+        );
+        assert_eq!(
+            url_for("-abcdefghij"),
+            format!("{ARCHIVE}/-/ar-/-ab/-abcdefghij.xml.gz")
+        );
     }
 
     #[test]
@@ -476,7 +573,10 @@ Thanks</TEXT>
         let a = fetch("6Uwd5w1AwYU").unwrap();
         println!("{} annotations; first: {:?}", a.len(), a.first());
         assert!(a.len() > 100);
-        assert!(a.iter().any(|a| a.kind == Kind::Highlight && matches!(a.action, Some(Action::Seek(_)))));
+        assert!(
+            a.iter()
+                .any(|a| a.kind == Kind::Highlight && matches!(a.action, Some(Action::Seek(_))))
+        );
         // a video that never had annotations
         assert!(fetch("aqz-KE-bpKQ").unwrap().is_empty());
     }

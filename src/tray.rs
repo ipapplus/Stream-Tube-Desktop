@@ -28,7 +28,12 @@ fn hwnd(window: &Window) -> Option<HWND> {
 }
 
 fn data(window: HWND) -> NOTIFYICONDATAW {
-    NOTIFYICONDATAW { cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32, hWnd: window, uID: ICON_ID, ..Default::default() }
+    NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: window,
+        uID: ICON_ID,
+        ..Default::default()
+    }
 }
 
 fn add_icon(window: HWND) -> bool {
@@ -40,8 +45,12 @@ fn add_icon(window: HWND) -> bool {
     }
     // SAFETY: Both the shared icon resource and the main HWND belong to this process.
     unsafe {
-        let module = GetModuleHandleW(None).ok().map(|module| HINSTANCE(module.0));
-        let Ok(app_icon) = LoadIconW(module, PCWSTR(1usize as *const u16)) else { return false };
+        let module = GetModuleHandleW(None)
+            .ok()
+            .map(|module| HINSTANCE(module.0));
+        let Ok(app_icon) = LoadIconW(module, PCWSTR(1usize as *const u16)) else {
+            return false;
+        };
         icon.hIcon = app_icon;
         if !Shell_NotifyIconW(NIM_ADD, &icon).as_bool() {
             return false;
@@ -54,7 +63,9 @@ fn add_icon(window: HWND) -> bool {
 
 fn remove_icon(window: HWND) {
     // SAFETY: the identifier refers only to the notification icon of this window.
-    unsafe { let _ = Shell_NotifyIconW(NIM_DELETE, &data(window)); }
+    unsafe {
+        let _ = Shell_NotifyIconW(NIM_DELETE, &data(window));
+    }
 }
 
 fn restore_native(window: HWND) {
@@ -75,7 +86,9 @@ pub(crate) fn hide(window: &Window) -> bool {
     if QUITTING.replace(false) || !crate::store::settings_snapshot().minimize_to_tray {
         return false;
     }
-    let Some(window) = hwnd(window) else { return false };
+    let Some(window) = hwnd(window) else {
+        return false;
+    };
     if HIDDEN.get() == Some(window) {
         return true;
     }
@@ -96,12 +109,21 @@ pub(crate) fn hide(window: &Window) -> bool {
 }
 
 pub(crate) fn restore(window: &Window) -> bool {
-    let Some(window) = hwnd(window).filter(|&window| HIDDEN.get() == Some(window)) else { return false };
+    let Some(window) = hwnd(window).filter(|&window| HIDDEN.get() == Some(window)) else {
+        return false;
+    };
     restore_native(window);
     true
 }
 
-extern "system" fn window_message(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, _: usize) -> LRESULT {
+extern "system" fn window_message(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _: usize,
+    _: usize,
+) -> LRESULT {
     if message == CALLBACK {
         let event = (lparam.0 as usize & 0xffff) as u32;
         match event {
@@ -114,7 +136,9 @@ extern "system" fn window_message(window: HWND, message: u32, wparam: WPARAM, lp
                         HIDDEN.set(None);
                         QUITTING.set(true);
                         // SAFETY: the owning window handles the posted close on its event loop.
-                        unsafe { let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                        unsafe {
+                            let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
+                        }
                     }
                     _ => {}
                 }
@@ -123,14 +147,17 @@ extern "system" fn window_message(window: HWND, message: u32, wparam: WPARAM, lp
         }
         return LRESULT(0);
     }
-    if TASKBAR_CREATED.get() == Some(&message) && HIDDEN.get() == Some(window) && !add_icon(window) {
+    if TASKBAR_CREATED.get() == Some(&message) && HIDDEN.get() == Some(window) && !add_icon(window)
+    {
         restore_native(window);
     }
     if message == WM_NCDESTROY {
         remove_icon(window);
         HIDDEN.set(None);
         // SAFETY: Remove the callback installed by hide before the window is destroyed.
-        unsafe { let _ = RemoveWindowSubclass(window, Some(window_message), 1); }
+        unsafe {
+            let _ = RemoveWindowSubclass(window, Some(window_message), 1);
+        }
     }
     // SAFETY: Forward unhandled messages to the next procedure on the original HWND.
     unsafe { DefSubclassProc(window, message, wparam, lparam) }
@@ -139,7 +166,9 @@ extern "system" fn window_message(window: HWND, message: u32, wparam: WPARAM, lp
 fn menu(window: HWND) -> i32 {
     // SAFETY: The menu is created, used and destroyed on the main HWND's owning thread.
     unsafe {
-        let Ok(menu) = CreatePopupMenu() else { return 0 };
+        let Ok(menu) = CreatePopupMenu() else {
+            return 0;
+        };
         let open = HSTRING::from(crate::i18n::t("Open"));
         let quit = HSTRING::from(crate::i18n::t("Quit"));
         let _ = AppendMenuW(menu, MF_STRING, OPEN as usize, &open);
@@ -147,7 +176,16 @@ fn menu(window: HWND) -> i32 {
         let _ = SetForegroundWindow(window);
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
-        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, cursor.x, cursor.y, None, window, None).0;
+        let command = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+            cursor.x,
+            cursor.y,
+            None,
+            window,
+            None,
+        )
+        .0;
         let _ = DestroyMenu(menu);
         let _ = PostMessageW(Some(window), WM_NULL, WPARAM(0), LPARAM(0));
         command

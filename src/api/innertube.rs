@@ -42,7 +42,10 @@ pub fn collect_items(v: &Value) -> Page {
     collect_items_with_video_nodes(v, |_, _| {})
 }
 
-pub(super) fn collect_items_with_video_nodes(v: &Value, mut node: impl FnMut(&VideoItem, &Value)) -> Page {
+pub(super) fn collect_items_with_video_nodes(
+    v: &Value,
+    mut node: impl FnMut(&VideoItem, &Value),
+) -> Page {
     let mut page = Page::default();
     walk_items(v, &mut page, &mut node);
     page
@@ -56,8 +59,12 @@ fn walk_items(v: &Value, page: &mut Page, node: &mut impl FnMut(&VideoItem, &Val
                     continue;
                 }
                 match k.as_str() {
-                    "videoRenderer" | "compactVideoRenderer" | "gridVideoRenderer" | "playlistVideoRenderer"
-                    | "playlistPanelVideoRenderer" | "videoWithContextRenderer" => {
+                    "videoRenderer"
+                    | "compactVideoRenderer"
+                    | "gridVideoRenderer"
+                    | "playlistVideoRenderer"
+                    | "playlistPanelVideoRenderer"
+                    | "videoWithContextRenderer" => {
                         if let Some(vi) = parse_video_renderer(c) {
                             node(&vi, c);
                             page.items.push(Item::Video(vi));
@@ -99,7 +106,11 @@ fn walk_items(v: &Value, page: &mut Page, node: &mut impl FnMut(&VideoItem, &Val
                             page.items.push(Item::Channel(ch));
                         }
                     }
-                    "playlistRenderer" | "gridPlaylistRenderer" | "radioRenderer" | "compactPlaylistRenderer" | "gridShowRenderer" => {
+                    "playlistRenderer"
+                    | "gridPlaylistRenderer"
+                    | "radioRenderer"
+                    | "compactPlaylistRenderer"
+                    | "gridShowRenderer" => {
                         if let Some(p) = parse_playlist_renderer(c) {
                             page.items.push(Item::Playlist(p));
                         }
@@ -121,8 +132,14 @@ fn walk_items(v: &Value, page: &mut Page, node: &mut impl FnMut(&VideoItem, &Val
                         }
                     }
                     // Skip noisy sections that duplicate items or are UI chrome.
-                    "frameworkUpdates" | "topbar" | "header" | "engagementPanels" | "playerOverlays" | "menu"
-                    | "endScreen" | "onResponseReceivedCommands" => {}
+                    "frameworkUpdates"
+                    | "topbar"
+                    | "header"
+                    | "engagementPanels"
+                    | "playerOverlays"
+                    | "menu"
+                    | "endScreen"
+                    | "onResponseReceivedCommands" => {}
                     _ => walk_items(c, page, node),
                 }
             }
@@ -152,24 +169,44 @@ pub(crate) fn parse_tile(t: &Value) -> Option<VideoItem> {
     let id = t
         .get("contentId")
         .and_then(Value::as_str)
-        .or_else(|| t.pointer("/onSelectCommand/watchEndpoint/videoId").and_then(Value::as_str))?
+        .or_else(|| {
+            t.pointer("/onSelectCommand/watchEndpoint/videoId")
+                .and_then(Value::as_str)
+        })?
         .to_string();
     let meta = t.pointer("/metadata/tileMetadataRenderer")?;
     let title = meta.get("title").map(text).unwrap_or_default();
     let images = t.pointer("/header/tileHeaderRenderer/thumbnail");
-    let thumbnail = images.and_then(best_thumb).unwrap_or_else(|| default_thumb(&id));
+    let thumbnail = images
+        .and_then(best_thumb)
+        .unwrap_or_else(|| default_thumb(&id));
     let mut overlays = Vec::new();
     find_all(t, "thumbnailOverlayTimeStatusRenderer", &mut overlays);
     let badge = overlays.first().and_then(|o| o.get("text")).map(text);
-    let is_live = overlays.iter().any(|o| o.get("style").and_then(Value::as_str) == Some("LIVE"));
+    let is_live = overlays
+        .iter()
+        .any(|o| o.get("style").and_then(Value::as_str) == Some("LIVE"));
     let mut parts: Vec<String> = Vec::new();
     let mut channel_id = None;
-    for line in meta.get("lines").and_then(Value::as_array).into_iter().flatten() {
-        for item in line.pointer("/lineRenderer/items").and_then(Value::as_array).into_iter().flatten() {
+    for line in meta
+        .get("lines")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for item in line
+            .pointer("/lineRenderer/items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let r = item.get("lineItemRenderer").unwrap_or(item);
             let tx = r.get("text").map(text).unwrap_or_default();
             if channel_id.is_none() {
-                channel_id = find(r, "browseEndpoint").and_then(|b| b.get("browseId")).and_then(Value::as_str).map(str::to_string);
+                channel_id = find(r, "browseEndpoint")
+                    .and_then(|b| b.get("browseId"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
             }
             let tx = tx.trim().trim_matches('•').trim().to_string();
             if !tx.is_empty() {
@@ -180,23 +217,38 @@ pub(crate) fn parse_tile(t: &Value) -> Option<VideoItem> {
     if channel_id.is_none() {
         let mut eps = Vec::new();
         find_all(t, "browseEndpoint", &mut eps);
-        channel_id = eps.iter().filter_map(|b| b.get("browseId").and_then(Value::as_str)).find(|b| b.starts_with("UC")).map(str::to_string);
+        channel_id = eps
+            .iter()
+            .filter_map(|b| b.get("browseId").and_then(Value::as_str))
+            .find(|b| b.starts_with("UC"))
+            .map(str::to_string);
     }
     // in any language: the date is the part that reads as a relative time, the
     // views the other part that starts with a number, and the channel comes first
     let published = parts
         .iter()
         .find(|p| p.to_lowercase().contains("ago") || p.to_lowercase().contains("streamed"))
-        .or_else(|| parts.iter().find(|p| crate::api::json::parse_relative_time(p).is_some()))
+        .or_else(|| {
+            parts
+                .iter()
+                .find(|p| crate::api::json::parse_relative_time(p).is_some())
+        })
         .cloned();
     let views = parts
         .iter()
         .find(|p| p.to_lowercase().contains("view") || p.to_lowercase().contains("watching"))
         .or_else(|| {
-            parts.iter().skip(1).find(|p| Some(*p) != published.as_ref() && p.chars().next().is_some_and(|c| c.is_ascii_digit()))
+            parts.iter().skip(1).find(|p| {
+                Some(*p) != published.as_ref()
+                    && p.chars().next().is_some_and(|c| c.is_ascii_digit())
+            })
         })
         .cloned();
-    let channel_name = parts.iter().find(|p| Some(*p) != views.as_ref() && Some(*p) != published.as_ref()).cloned().unwrap_or_default();
+    let channel_name = parts
+        .iter()
+        .find(|p| Some(*p) != views.as_ref() && Some(*p) != published.as_ref())
+        .cloned()
+        .unwrap_or_default();
     let duration_secs = badge.as_deref().and_then(parse_duration);
     // A show (podcast, series) is a tile too: it opens a playlist, its badge counts
     // episodes instead of giving a length, its title is the show's name and its two lines
@@ -208,16 +260,25 @@ pub(crate) fn parse_tile(t: &Value) -> Option<VideoItem> {
         .pointer("/onSelectCommand/browseEndpoint/browseId")
         .and_then(Value::as_str)
         .and_then(|b| b.strip_prefix("VL"))
-        .or_else(|| t.pointer("/onSelectCommand/watchEndpoint/playlistId").and_then(Value::as_str).filter(|p| p.starts_with("OL")))
+        .or_else(|| {
+            t.pointer("/onSelectCommand/watchEndpoint/playlistId")
+                .and_then(Value::as_str)
+                .filter(|p| p.starts_with("OL"))
+        })
         .map(str::to_string);
     let is_show = show_playlist.is_some();
-    let (title, channel_name, views) = if is_show && parts.len() == 2 && views.is_none() && published.is_none() {
-        let size = badge.clone().filter(|_| duration_secs.is_none());
-        let note = [Some(title), size].into_iter().flatten().collect::<Vec<_>>().join(" • ");
-        (parts[0].clone(), parts[1].clone(), Some(note))
-    } else {
-        (title, channel_name, views)
-    };
+    let (title, channel_name, views) =
+        if is_show && parts.len() == 2 && views.is_none() && published.is_none() {
+            let size = badge.clone().filter(|_| duration_secs.is_none());
+            let note = [Some(title), size]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" • ");
+            (parts[0].clone(), parts[1].clone(), Some(note))
+        } else {
+            (title, channel_name, views)
+        };
     Some(VideoItem {
         id,
         title,
@@ -240,7 +301,9 @@ fn parse_video_renderer(r: &Value) -> Option<VideoItem> {
         return None;
     }
     let id = r.get("videoId")?.as_str()?.to_string();
-    let title = opt_text(r.get("title")).or_else(|| opt_text(r.get("headline"))).unwrap_or_default();
+    let title = opt_text(r.get("title"))
+        .or_else(|| opt_text(r.get("headline")))
+        .unwrap_or_default();
     let owner = r
         .get("ownerText")
         .or_else(|| r.get("longBylineText"))
@@ -260,11 +323,15 @@ fn parse_video_renderer(r: &Value) -> Option<VideoItem> {
     let badges = r.get("badges").map(|b| b.to_string()).unwrap_or_default();
     let is_live = badges.contains("LIVE_NOW")
         || badges.contains("\"LIVE\"")
-        || duration_text.as_deref().map(|d| d.eq_ignore_ascii_case("live")).unwrap_or(false);
+        || duration_text
+            .as_deref()
+            .map(|d| d.eq_ignore_ascii_case("live"))
+            .unwrap_or(false);
     let is_upcoming = r.get("upcomingEventData").is_some();
     let duration_secs = duration_text.as_deref().and_then(parse_duration);
     let published_text = opt_text(r.get("publishedTimeText"));
-    let views_text = opt_text(r.get("shortViewCountText")).or_else(|| opt_text(r.get("viewCountText")));
+    let views_text =
+        opt_text(r.get("shortViewCountText")).or_else(|| opt_text(r.get("viewCountText")));
     let snippet = r
         .pointer("/detailedMetadataSnippets/0/snippetText")
         .map(text)
@@ -273,11 +340,12 @@ fn parse_video_renderer(r: &Value) -> Option<VideoItem> {
         .pointer("/channelThumbnailSupportedRenderers/channelThumbnailWithLinkRenderer/thumbnail")
         .or_else(|| r.get("channelThumbnail"))
         .and_then(small_thumb);
-    let is_short = r
-        .pointer("/navigationEndpoint/reelWatchEndpoint")
-        .is_some();
+    let is_short = r.pointer("/navigationEndpoint/reelWatchEndpoint").is_some();
     Some(VideoItem {
-        thumbnail: r.get("thumbnail").and_then(best_thumb).unwrap_or_else(|| default_thumb(&id)),
+        thumbnail: r
+            .get("thumbnail")
+            .and_then(best_thumb)
+            .unwrap_or_else(|| default_thumb(&id)),
         compact_thumbnail: r.get("thumbnail").and_then(compact_thumb),
         published_ts: published_text.as_deref().and_then(parse_relative_time),
         id,
@@ -349,10 +417,14 @@ fn parse_lockup(l: &Value) -> Option<Item> {
     let id = l.get("contentId")?.as_str()?.to_string();
     let ctype = l.get("contentType").and_then(Value::as_str).unwrap_or("");
     let meta = l.pointer("/metadata/lockupMetadataViewModel")?;
-    let title = meta.pointer("/title/content").and_then(Value::as_str).unwrap_or("").to_string();
-    let thumb_vm = l
-        .pointer("/contentImage/thumbnailViewModel")
-        .or_else(|| l.pointer("/contentImage/collectionThumbnailViewModel/primaryThumbnail/thumbnailViewModel"));
+    let title = meta
+        .pointer("/title/content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let thumb_vm = l.pointer("/contentImage/thumbnailViewModel").or_else(|| {
+        l.pointer("/contentImage/collectionThumbnailViewModel/primaryThumbnail/thumbnailViewModel")
+    });
     let images = thumb_vm.and_then(|t| t.get("image"));
     let thumbnail = images.and_then(best_thumb);
     // badges (duration / LIVE / "N videos")
@@ -377,8 +449,15 @@ fn parse_lockup(l: &Value) -> Option<Item> {
         .and_then(Value::as_array)
     {
         for row in rows {
-            for part in row.get("metadataParts").and_then(Value::as_array).into_iter().flatten() {
-                let Some(tx) = part.pointer("/text/content").and_then(Value::as_str) else { continue };
+            for part in row
+                .get("metadataParts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(tx) = part.pointer("/text/content").and_then(Value::as_str) else {
+                    continue;
+                };
                 let tx = tx.trim().to_string();
                 if tx.is_empty() {
                     continue;
@@ -390,9 +469,16 @@ fn parse_lockup(l: &Value) -> Option<Item> {
                 if let Some(b) = browse.filter(|b| b.starts_with("UC")) {
                     channel_name = Some(tx);
                     channel_id = Some(b.to_string());
-                } else if low.contains("view") || low.contains("watching") || low.contains("waiting") {
+                } else if low.contains("view")
+                    || low.contains("watching")
+                    || low.contains("waiting")
+                {
                     views = Some(tx);
-                } else if low.contains("ago") || low.contains("streamed") || low.contains("premiere") || low.contains("scheduled") {
+                } else if low.contains("ago")
+                    || low.contains("streamed")
+                    || low.contains("premiere")
+                    || low.contains("scheduled")
+                {
                     published = Some(tx);
                 } else {
                     others.push(tx);
@@ -426,20 +512,37 @@ fn parse_lockup(l: &Value) -> Option<Item> {
         "LOCKUP_CONTENT_TYPE_VIDEO" | "LOCKUP_CONTENT_TYPE_MUSIC" | "LOCKUP_CONTENT_TYPE_SHORT" => {
             let is_short = ctype == "LOCKUP_CONTENT_TYPE_SHORT";
             let is_live = badge_texts.iter().any(|b| b.eq_ignore_ascii_case("live"));
-            let is_upcoming = badge_texts.iter().any(|b| b.eq_ignore_ascii_case("upcoming"));
-            let duration_text = badge_texts.iter().find(|b| parse_duration(b).is_some()).cloned();
-            let published = published.or_else(|| others.iter().find(|o| parse_relative_time(o).is_some()).cloned());
+            let is_upcoming = badge_texts
+                .iter()
+                .any(|b| b.eq_ignore_ascii_case("upcoming"));
+            let duration_text = badge_texts
+                .iter()
+                .find(|b| parse_duration(b).is_some())
+                .cloned();
+            let published = published.or_else(|| {
+                others
+                    .iter()
+                    .find(|o| parse_relative_time(o).is_some())
+                    .cloned()
+            });
             let views = views.or_else(|| {
                 // compact form "1B" with PLAY_ARROW icon, or another language: no "views" word;
                 // pick the numeric-ish part that isn't the date or the channel
                 others
                     .iter()
                     .filter(|o| Some(*o) != published.as_ref() && Some(*o) != channel_name.as_ref())
-                    .find(|o| o.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+                    .find(|o| {
+                        o.chars()
+                            .next()
+                            .map(|c| c.is_ascii_digit())
+                            .unwrap_or(false)
+                    })
                     .cloned()
             });
             let views = views.map(|v| {
-                if v.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ',' || "KMB".contains(c)) {
+                if v.chars()
+                    .all(|c| c.is_ascii_digit() || c == '.' || c == ',' || "KMB".contains(c))
+                {
                     format!("{v} views")
                 } else {
                     v
@@ -464,7 +567,11 @@ fn parse_lockup(l: &Value) -> Option<Item> {
                 ..Default::default()
             }))
         }
-        "LOCKUP_CONTENT_TYPE_PLAYLIST" | "LOCKUP_CONTENT_TYPE_PODCAST" | "LOCKUP_CONTENT_TYPE_ALBUM" | "LOCKUP_CONTENT_TYPE_COURSE" | "LOCKUP_CONTENT_TYPE_SHOW" => {
+        "LOCKUP_CONTENT_TYPE_PLAYLIST"
+        | "LOCKUP_CONTENT_TYPE_PODCAST"
+        | "LOCKUP_CONTENT_TYPE_ALBUM"
+        | "LOCKUP_CONTENT_TYPE_COURSE"
+        | "LOCKUP_CONTENT_TYPE_SHOW" => {
             let first_video_id = find(l, "watchEndpoint")
                 .and_then(|w| w.get("videoId"))
                 .and_then(Value::as_str)
@@ -504,24 +611,38 @@ fn parse_channel_renderer(r: &Value) -> Option<ChannelItem> {
         avatar: r.get("thumbnail").and_then(best_thumb),
         handle,
         subscribers_text: subs,
-        video_count_text: if a.as_deref().map(|x| x.starts_with('@')).unwrap_or(false) { None } else { b },
+        video_count_text: if a.as_deref().map(|x| x.starts_with('@')).unwrap_or(false) {
+            None
+        } else {
+            b
+        },
         description: opt_text(r.get("descriptionSnippet")),
     })
 }
 
 fn parse_playlist_renderer(r: &Value) -> Option<PlaylistItem> {
-    let id = r.get("playlistId").and_then(Value::as_str).or_else(|| {
-        r.pointer("/navigationEndpoint/browseEndpoint/browseId")?
-            .as_str()?
-            .strip_prefix("VL")
-            .filter(|id| !id.is_empty())
-    })?.to_string();
+    let id = r
+        .get("playlistId")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            r.pointer("/navigationEndpoint/browseEndpoint/browseId")?
+                .as_str()?
+                .strip_prefix("VL")
+                .filter(|id| !id.is_empty())
+        })?
+        .to_string();
     let thumbnail = r
         .pointer("/thumbnails/0")
         .and_then(best_thumb)
         .or_else(|| r.get("thumbnail").and_then(best_thumb))
-        .or_else(|| r.pointer("/thumbnailRenderer/playlistVideoThumbnailRenderer/thumbnail").and_then(best_thumb))
-        .or_else(|| r.pointer("/thumbnailRenderer/showCustomThumbnailRenderer/thumbnail").and_then(best_thumb));
+        .or_else(|| {
+            r.pointer("/thumbnailRenderer/playlistVideoThumbnailRenderer/thumbnail")
+                .and_then(best_thumb)
+        })
+        .or_else(|| {
+            r.pointer("/thumbnailRenderer/showCustomThumbnailRenderer/thumbnail")
+                .and_then(best_thumb)
+        });
     let owner = r.get("longBylineText").or_else(|| r.get("shortBylineText"));
     Some(PlaylistItem {
         id,
@@ -534,8 +655,20 @@ fn parse_playlist_renderer(r: &Value) -> Option<PlaylistItem> {
             .map(str::to_string),
         video_count_text: opt_text(r.get("videoCountText"))
             .or_else(|| opt_text(r.get("videoCountShortText")))
-            .or_else(|| opt_text(find(r.get("thumbnailOverlays")?, "thumbnailOverlayBottomPanelRenderer")?.get("text")))
-            .or_else(|| r.get("videoCount").and_then(Value::as_str).map(|c| format!("{c} videos"))),
+            .or_else(|| {
+                opt_text(
+                    find(
+                        r.get("thumbnailOverlays")?,
+                        "thumbnailOverlayBottomPanelRenderer",
+                    )?
+                    .get("text"),
+                )
+            })
+            .or_else(|| {
+                r.get("videoCount")
+                    .and_then(Value::as_str)
+                    .map(|c| format!("{c} videos"))
+            }),
         first_video_id: r
             .pointer("/navigationEndpoint/watchEndpoint/videoId")
             .and_then(Value::as_str)
@@ -589,17 +722,37 @@ impl SearchFilter {
             varint(out, v);
         }
         let mut filters = Vec::new();
-        if self.date > 0 { field(&mut filters, 1, self.date as u64); }
-        if self.kind > 0 { field(&mut filters, 2, self.kind as u64); }
-        if self.duration > 0 { field(&mut filters, 3, self.duration as u64); }
-        if self.hd { field(&mut filters, 4, 1); }
-        if self.subtitles { field(&mut filters, 5, 1); }
-        if self.creative_commons { field(&mut filters, 6, 1); }
-        if self.live { field(&mut filters, 8, 1); }
-        if self.four_k { field(&mut filters, 14, 1); }
-        if self.hdr { field(&mut filters, 25, 1); }
+        if self.date > 0 {
+            field(&mut filters, 1, self.date as u64);
+        }
+        if self.kind > 0 {
+            field(&mut filters, 2, self.kind as u64);
+        }
+        if self.duration > 0 {
+            field(&mut filters, 3, self.duration as u64);
+        }
+        if self.hd {
+            field(&mut filters, 4, 1);
+        }
+        if self.subtitles {
+            field(&mut filters, 5, 1);
+        }
+        if self.creative_commons {
+            field(&mut filters, 6, 1);
+        }
+        if self.live {
+            field(&mut filters, 8, 1);
+        }
+        if self.four_k {
+            field(&mut filters, 14, 1);
+        }
+        if self.hdr {
+            field(&mut filters, 25, 1);
+        }
         let mut out = Vec::new();
-        if self.sort > 0 { field(&mut out, 1, self.sort as u64); }
+        if self.sort > 0 {
+            field(&mut out, 1, self.sort as u64);
+        }
         if !filters.is_empty() {
             varint(&mut out, (2 << 3) | 2);
             varint(&mut out, filters.len() as u64);
@@ -626,11 +779,13 @@ pub fn search_continue(token: &str) -> Result<Page> {
 
 fn search_continuation_page(response: &Value) -> Page {
     let mut page = collect_items(response);
-    if let Some(commands) = response.get("onResponseReceivedCommands").and_then(Value::as_array) {
-        for items in commands
-            .iter()
-            .filter_map(|command| command.pointer("/appendContinuationItemsAction/continuationItems"))
-        {
+    if let Some(commands) = response
+        .get("onResponseReceivedCommands")
+        .and_then(Value::as_array)
+    {
+        for items in commands.iter().filter_map(|command| {
+            command.pointer("/appendContinuationItemsAction/continuationItems")
+        }) {
             walk_items(items, &mut page, &mut |_, _| {});
         }
     }
@@ -643,9 +798,18 @@ fn search_continuation_page(response: &Value) -> Page {
 /// The Shorts feed. With the browser sign-in it is the account's own Shorts
 /// recommendations; otherwise it starts from `seed` (a Short from the local
 /// history) so YouTube follows on from what was watched, or from nothing.
-pub fn shorts_feed(token: Option<&str>, seed: Option<&str>) -> Result<(Vec<VideoItem>, Option<String>)> {
+pub fn shorts_feed(
+    token: Option<&str>,
+    seed: Option<&str>,
+) -> Result<(Vec<VideoItem>, Option<String>)> {
     let personal = crate::api::web::connected();
-    let call = |ep: &str, body: Value| if personal { crate::api::web::web_call(ep, body) } else { call(ep, body) };
+    let call = |ep: &str, body: Value| {
+        if personal {
+            crate::api::web::web_call(ep, body)
+        } else {
+            call(ep, body)
+        }
+    };
     let mut ids: Vec<String> = Vec::new();
     let seq = match token {
         Some(t) => t.to_string(),
@@ -660,27 +824,56 @@ pub fn shorts_feed(token: Option<&str>, seed: Option<&str>) -> Result<(Vec<Video
         None => {
             let body = json!({ "params": "CA8%3D", "disablePlayerResponse": true, "inputType": "REEL_WATCH_INPUT_TYPE_SEEDLESS" });
             let r = call("reel/reel_item_watch", body)?;
-            let token = r.get("sequenceContinuation").and_then(Value::as_str).ok_or_else(|| anyhow!("no shorts sequence"))?.to_owned();
-            if let Some(id) = r.pointer("/replacementEndpoint/reelWatchEndpoint/videoId").and_then(Value::as_str).filter(|id| !id.is_empty()) {
+            let token = r
+                .get("sequenceContinuation")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("no shorts sequence"))?
+                .to_owned();
+            if let Some(id) = r
+                .pointer("/replacementEndpoint/reelWatchEndpoint/videoId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
                 // The seed is already playable. The page can request the sequence after showing it.
-                let first = VideoItem { id: id.to_owned(), thumbnail: default_thumb(id), is_short: true, ..Default::default() };
+                let first = VideoItem {
+                    id: id.to_owned(),
+                    thumbnail: default_thumb(id),
+                    is_short: true,
+                    ..Default::default()
+                };
                 return Ok((vec![first], Some(token)));
             }
             token
         }
     };
     let s = call("reel/reel_watch_sequence", json!({ "sequenceParams": seq }))?;
-    for e in s.get("entries").and_then(Value::as_array).into_iter().flatten() {
-        if let Some(id) = e.pointer("/command/reelWatchEndpoint/videoId").and_then(Value::as_str) {
+    for e in s
+        .get("entries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(id) = e
+            .pointer("/command/reelWatchEndpoint/videoId")
+            .and_then(Value::as_str)
+        {
             if !ids.iter().any(|x| x == id) {
                 ids.push(id.to_string());
             }
         }
     }
-    let cont = s.pointer("/continuationEndpoint/continuationCommand/token").and_then(Value::as_str).map(str::to_string);
+    let cont = s
+        .pointer("/continuationEndpoint/continuationCommand/token")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let items = ids
         .into_iter()
-        .map(|id| VideoItem { thumbnail: default_thumb(&id), id, is_short: true, ..Default::default() })
+        .map(|id| VideoItem {
+            thumbnail: default_thumb(&id),
+            id,
+            is_short: true,
+            ..Default::default()
+        })
         .collect();
     Ok((items, cont))
 }
@@ -697,10 +890,16 @@ pub fn suggestions(query: &str) -> Result<Vec<String>> {
     if let Some(v) = yt.filter(|v| !v.is_empty()) {
         return Ok(v);
     }
-    let v = http::get_json(&format!("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl={hl}&gl={gl}&q={q}"))?;
+    let v = http::get_json(&format!(
+        "https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl={hl}&gl={gl}&q={q}"
+    ))?;
     Ok(v.get(1)
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
@@ -713,7 +912,12 @@ fn parse_suggestions_jsonp(t: &str) -> Option<Vec<String>> {
         v.get(1)?
             .as_array()?
             .iter()
-            .filter_map(|e| e.get(0).and_then(Value::as_str).or_else(|| e.as_str()).map(str::to_string))
+            .filter_map(|e| {
+                e.get(0)
+                    .and_then(Value::as_str)
+                    .or_else(|| e.as_str())
+                    .map(str::to_string)
+            })
             .collect(),
     )
 }
@@ -722,8 +926,12 @@ fn parse_suggestions_jsonp(t: &str) -> Option<Vec<String>> {
 mod suggest_tests {
     #[test]
     fn jsonp() {
-        let t = r#"window.google.ac.h(["lofi",[["lofi",0,[512]],["lofi girl",0,[512,433]]],{"k":1}])"#;
-        assert_eq!(super::parse_suggestions_jsonp(t).unwrap(), vec!["lofi", "lofi girl"]);
+        let t =
+            r#"window.google.ac.h(["lofi",[["lofi",0,[512]],["lofi girl",0,[512,433]]],{"k":1}])"#;
+        assert_eq!(
+            super::parse_suggestions_jsonp(t).unwrap(),
+            vec!["lofi", "lofi girl"]
+        );
     }
 
     #[test]
@@ -752,8 +960,13 @@ pub fn browse_continue(token: &str) -> Result<Page> {
 /// Resolves a YouTube URL (/@handle, /c/name, /channel/UC.., /playlist?list=, /watch?v=) via the API.
 pub fn resolve_url(url: &str) -> Result<ResolvedUrl> {
     let r = call("navigation/resolve_url", json!({ "url": url }))?;
-    let ep = r.get("endpoint").ok_or_else(|| anyhow!("unresolvable url"))?;
-    if let Some(id) = ep.pointer("/browseEndpoint/browseId").and_then(Value::as_str) {
+    let ep = r
+        .get("endpoint")
+        .ok_or_else(|| anyhow!("unresolvable url"))?;
+    if let Some(id) = ep
+        .pointer("/browseEndpoint/browseId")
+        .and_then(Value::as_str)
+    {
         if let Some(pl) = id.strip_prefix("VL") {
             return Ok(ResolvedUrl::Playlist(pl.to_string()));
         }
@@ -773,11 +986,17 @@ pub enum ResolvedUrl {
 }
 
 fn is_video_id(id: &str) -> bool {
-    id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    id.len() == 11
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 fn is_browse_id(id: &str) -> bool {
-    (2..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    (2..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Fast local parse of common URL shapes before falling back to resolve_url.
@@ -816,7 +1035,10 @@ pub fn parse_youtube_url(input: &str) -> Option<ResolvedUrl> {
         return Some(ResolvedUrl::Playlist(l));
     }
     if let Some(rest) = s.split("/channel/").nth(1) {
-        let id: String = rest.chars().take_while(|c| *c != '/' && *c != '?' && *c != '#').collect();
+        let id: String = rest
+            .chars()
+            .take_while(|c| *c != '/' && *c != '?' && *c != '#')
+            .collect();
         if id.starts_with("UC") && is_browse_id(&id) {
             return Some(ResolvedUrl::Channel(id));
         }
@@ -826,7 +1048,10 @@ pub fn parse_youtube_url(input: &str) -> Option<ResolvedUrl> {
 
 pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage> {
     let r = browse(channel_id, tab_params)?;
-    let mut info = ChannelItem { id: channel_id.to_string(), ..Default::default() };
+    let mut info = ChannelItem {
+        id: channel_id.to_string(),
+        ..Default::default()
+    };
     if let Some(md) = r.pointer("/metadata/channelMetadataRenderer") {
         info.name = s(md, "/title").unwrap_or_default();
         info.description = s(md, "/description");
@@ -834,7 +1059,8 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
         if let Some(ext) = s(md, "/externalId") {
             info.id = ext;
         }
-        info.handle = s(md, "/vanityChannelUrl").and_then(|u| u.rsplit('/').next().map(str::to_string));
+        info.handle =
+            s(md, "/vanityChannelUrl").and_then(|u| u.rsplit('/').next().map(str::to_string));
     }
     let mut banner = None;
     if let Some(ph) = r.pointer("/header/pageHeaderRenderer/content/pageHeaderViewModel") {
@@ -846,10 +1072,20 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
                 .pointer("/image/decoratedAvatarViewModel/avatar/avatarViewModel/image")
                 .and_then(best_thumb);
         }
-        banner = ph.pointer("/banner/imageBannerViewModel/image").and_then(best_thumb);
-        if let Some(rows) = ph.pointer("/metadata/contentMetadataViewModel/metadataRows").and_then(Value::as_array) {
+        banner = ph
+            .pointer("/banner/imageBannerViewModel/image")
+            .and_then(best_thumb);
+        if let Some(rows) = ph
+            .pointer("/metadata/contentMetadataViewModel/metadataRows")
+            .and_then(Value::as_array)
+        {
             for row in rows {
-                for part in row.get("metadataParts").and_then(Value::as_array).into_iter().flatten() {
+                for part in row
+                    .get("metadataParts")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
                     if let Some(t) = part.pointer("/text/content").and_then(Value::as_str) {
                         let low = t.to_lowercase();
                         if t.starts_with('@') {
@@ -869,9 +1105,14 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
     }
     let mut tabs = Vec::new();
     let mut page = Page::default();
-    if let Some(arr) = r.pointer("/contents/twoColumnBrowseResultsRenderer/tabs").and_then(Value::as_array) {
+    if let Some(arr) = r
+        .pointer("/contents/twoColumnBrowseResultsRenderer/tabs")
+        .and_then(Value::as_array)
+    {
         for t in arr {
-            let tr = t.get("tabRenderer").or_else(|| t.get("expandableTabRenderer"));
+            let tr = t
+                .get("tabRenderer")
+                .or_else(|| t.get("expandableTabRenderer"));
             let Some(tr) = tr else { continue };
             let title = s(tr, "/title").unwrap_or_default();
             let selected = tr.get("selected").and_then(Value::as_bool).unwrap_or(false);
@@ -883,7 +1124,12 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
             }
             if !title.is_empty() {
                 let kind = tab_kind(tr, &title);
-                tabs.push(ChannelTab { title, kind, params, selected });
+                tabs.push(ChannelTab {
+                    title,
+                    kind,
+                    params,
+                    selected,
+                });
             }
         }
     }
@@ -901,14 +1147,24 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
             }
         }
     }
-    Ok(ChannelPage { info, banner, tabs, page })
+    Ok(ChannelPage {
+        info,
+        banner,
+        tabs,
+        page,
+    })
 }
 
 /// A channel tab's kind from its URL ("/@name/videos" -> "videos"). Titles follow
 /// the content language ("Videolar", "Видео"), so they can't tell tabs apart.
 fn tab_kind(tab: &Value, title: &str) -> String {
     s(tab, "/endpoint/commandMetadata/webCommandMetadata/url")
-        .and_then(|u| u.split('?').next().and_then(|p| p.rsplit('/').next()).map(str::to_ascii_lowercase))
+        .and_then(|u| {
+            u.split('?')
+                .next()
+                .and_then(|p| p.rsplit('/').next())
+                .map(str::to_ascii_lowercase)
+        })
         .filter(|k| !k.is_empty() && !k.starts_with('@') && !k.starts_with("uc"))
         .unwrap_or_else(|| match title {
             "Home" => "featured".into(),
@@ -931,7 +1187,13 @@ pub fn channel_avatar(channel_id: &str) -> Result<Option<String>> {
 
 /// Finds a channel by its exact display name: (channel id, avatar).
 pub fn channel_by_name(name: &str) -> Result<Option<(String, Option<String>)>> {
-    let page = search(name, &SearchFilter { kind: 2, ..Default::default() })?;
+    let page = search(
+        name,
+        &SearchFilter {
+            kind: 2,
+            ..Default::default()
+        },
+    )?;
     let want = name.trim().to_lowercase();
     Ok(page.items.into_iter().find_map(|i| match i {
         Item::Channel(c) if c.name.trim().to_lowercase() == want => Some((c.id, c.avatar)),
@@ -941,7 +1203,10 @@ pub fn channel_by_name(name: &str) -> Result<Option<(String, Option<String>)>> {
 
 /// Searches within a channel.
 pub fn channel_search(channel_id: &str, query: &str) -> Result<Page> {
-    let r = call("browse", json!({ "browseId": channel_id, "params": "EgZzZWFyY2jyBgQKAloA", "query": query }))?;
+    let r = call(
+        "browse",
+        json!({ "browseId": channel_id, "params": "EgZzZWFyY2jyBgQKAloA", "query": query }),
+    )?;
     Ok(collect_items(&r))
 }
 
@@ -949,7 +1214,10 @@ pub fn playlist(playlist_id: &str) -> Result<PlaylistPage> {
     let r = browse(&format!("VL{playlist_id}"), None)?;
     let content = r.get("contents").cloned().unwrap_or(Value::Null);
     let page = collect_items(&content);
-    let mut info = PlaylistItem { id: playlist_id.to_string(), ..Default::default() };
+    let mut info = PlaylistItem {
+        id: playlist_id.to_string(),
+        ..Default::default()
+    };
     if let Some(md) = r.pointer("/metadata/playlistMetadataRenderer") {
         info.title = s(md, "/title").unwrap_or_default();
     }
@@ -966,7 +1234,10 @@ pub fn playlist(playlist_id: &str) -> Result<PlaylistPage> {
                     if t.to_lowercase().contains("video") {
                         info.video_count_text = Some(t.to_string());
                     }
-                    if let Some(b) = find(p, "browseEndpoint").and_then(|b| b.get("browseId")).and_then(Value::as_str) {
+                    if let Some(b) = find(p, "browseEndpoint")
+                        .and_then(|b| b.get("browseId"))
+                        .and_then(Value::as_str)
+                    {
                         if b.starts_with("UC") {
                             info.channel_id = Some(b.to_string());
                             info.channel_name = Some(t.trim_start_matches("by ").to_string());
@@ -984,13 +1255,22 @@ pub fn playlist(playlist_id: &str) -> Result<PlaylistPage> {
         info.channel_name = opt_text(h.get("ownerText"));
         description = opt_text(h.get("descriptionText"));
     }
-    let videos: Vec<VideoItem> = page.items.into_iter().filter_map(|i| match i {
-        Item::Video(v) => Some(v),
-        _ => None,
-    }).collect();
+    let videos: Vec<VideoItem> = page
+        .items
+        .into_iter()
+        .filter_map(|i| match i {
+            Item::Video(v) => Some(v),
+            _ => None,
+        })
+        .collect();
     info.thumbnail = videos.first().map(|v| v.thumbnail.clone());
     info.first_video_id = videos.first().map(|v| v.id.clone());
-    Ok(PlaylistPage { info, description, videos, continuation: page.continuation })
+    Ok(PlaylistPage {
+        info,
+        description,
+        videos,
+        continuation: page.continuation,
+    })
 }
 
 /// Upper bound on continuation requests for one playlist (~10,000 videos).
@@ -998,7 +1278,13 @@ pub const MAX_PLAYLIST_PAGES: usize = 100;
 
 /// Fetches one continuation page of a playlist and extracts its videos.
 pub fn playlist_continue(token: &str, authed: bool) -> Result<(Vec<VideoItem>, Option<String>)> {
-    let fetch = || if authed { super::auth::browse_continue(token) } else { browse_continue(token) };
+    let fetch = || {
+        if authed {
+            super::auth::browse_continue(token)
+        } else {
+            browse_continue(token)
+        }
+    };
     let page = fetch().or_else(|_| fetch())?;
     let videos = page
         .items
@@ -1064,7 +1350,9 @@ impl PlaylistPager {
     }
 
     pub fn next_token(&self) -> Option<&str> {
-        (self.pages_loaded < self.max_pages).then_some(self.next.as_deref()).flatten()
+        (self.pages_loaded < self.max_pages)
+            .then_some(self.next.as_deref())
+            .flatten()
     }
 }
 
@@ -1072,13 +1360,24 @@ impl PlaylistPager {
 
 fn description_link_url(command: &Value) -> Option<String> {
     if let Some(watch) = command.get("watchEndpoint") {
-        let id = watch.get("videoId")?.as_str().filter(|id| is_video_id(id))?;
+        let id = watch
+            .get("videoId")?
+            .as_str()
+            .filter(|id| is_video_id(id))?;
         let mut url = format!("https://www.youtube.com/watch?v={id}");
-        if let Some(list) = watch.get("playlistId").and_then(Value::as_str).filter(|id| is_browse_id(id)) {
+        if let Some(list) = watch
+            .get("playlistId")
+            .and_then(Value::as_str)
+            .filter(|id| is_browse_id(id))
+        {
             url.push_str("&list=");
             url.push_str(list);
         }
-        if let Some(start) = watch.get("startTimeSeconds").and_then(Value::as_u64).filter(|&start| start > 0) {
+        if let Some(start) = watch
+            .get("startTimeSeconds")
+            .and_then(Value::as_u64)
+            .filter(|&start| start > 0)
+        {
             url.push_str("&t=");
             url.push_str(&start.to_string());
         }
@@ -1095,7 +1394,9 @@ fn description_link_url(command: &Value) -> Option<String> {
 }
 
 fn description_links(attributed: &Value, text: &str) -> Vec<DescriptionLink> {
-    let Some(runs) = attributed.get("commandRuns").and_then(Value::as_array) else { return Vec::new() };
+    let Some(runs) = attributed.get("commandRuns").and_then(Value::as_array) else {
+        return Vec::new();
+    };
     // YouTube counts UTF-16 code units. A span cannot split a surrogate pair.
     let offsets: Vec<_> = text
         .char_indices()
@@ -1105,7 +1406,8 @@ fn description_links(attributed: &Value, text: &str) -> Vec<DescriptionLink> {
     let mut links: Vec<_> = runs
         .iter()
         .filter_map(|run| {
-            let start = usize::try_from(run.get("startIndex").map_or(Some(0), Value::as_u64)?).ok()?;
+            let start =
+                usize::try_from(run.get("startIndex").map_or(Some(0), Value::as_u64)?).ok()?;
             let length = usize::try_from(run.get("length")?.as_u64()?).ok()?;
             let start_byte = (*offsets.get(start)?)?;
             let end_byte = (*offsets.get(start.checked_add(length)?)?)?;
@@ -1113,7 +1415,10 @@ fn description_links(attributed: &Value, text: &str) -> Vec<DescriptionLink> {
                 return None;
             }
             let url = description_link_url(run.pointer("/onTap/innertubeCommand")?)?;
-            Some(DescriptionLink { range: start_byte..end_byte, url })
+            Some(DescriptionLink {
+                range: start_byte..end_byte,
+                url,
+            })
         })
         .collect();
     links.sort_by_key(|link| link.range.start);
@@ -1134,8 +1439,14 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
         body["playlistId"] = json!(p);
     }
     let r = call("next", body)?;
-    let mut w = WatchInfo { id: video_id.to_string(), ..Default::default() };
-    let results = r.pointer("/contents/twoColumnWatchNextResults").cloned().unwrap_or(Value::Null);
+    let mut w = WatchInfo {
+        id: video_id.to_string(),
+        ..Default::default()
+    };
+    let results = r
+        .pointer("/contents/twoColumnWatchNextResults")
+        .cloned()
+        .unwrap_or(Value::Null);
     if let Some(p) = find(&results, "videoPrimaryInfoRenderer") {
         w.title = opt_text(p.get("title")).unwrap_or_default();
         w.views_text = p
@@ -1167,7 +1478,10 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
             w.channel.subscribers_text = opt_text(o.get("subscriberCountText"));
             // collaborations: "A and B", with the channels listed in a dialog
             if w.channel.name.is_empty() {
-                if let Some(t) = o.pointer("/attributedTitle/content").and_then(Value::as_str) {
+                if let Some(t) = o
+                    .pointer("/attributedTitle/content")
+                    .and_then(Value::as_str)
+                {
                     w.channel.name = t.to_string();
                 }
             }
@@ -1187,7 +1501,15 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
                             .pointer("/subtitle/content")
                             .and_then(Value::as_str)
                             .and_then(|s| s.split('\u{2022}').nth(1))
-                            .map(|s| s.chars().filter(|c| !('\u{2066}'..='\u{2069}').contains(c) && *c != '\u{200e}').collect::<String>().trim().to_string())
+                            .map(|s| {
+                                s.chars()
+                                    .filter(|c| {
+                                        !('\u{2066}'..='\u{2069}').contains(c) && *c != '\u{200e}'
+                                    })
+                                    .collect::<String>()
+                                    .trim()
+                                    .to_string()
+                            })
                             .filter(|s| !s.is_empty());
                     }
                 }
@@ -1199,7 +1521,10 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
                 }
             }
         }
-        if let Some((attributed, content)) = sec.get("attributedDescription").and_then(|d| Some((d, d.get("content")?.as_str()?))) {
+        if let Some((attributed, content)) = sec
+            .get("attributedDescription")
+            .and_then(|d| Some((d, d.get("content")?.as_str()?)))
+        {
             w.description = content.to_string();
             w.description_links = description_links(attributed, content);
         } else {
@@ -1217,11 +1542,16 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
     find_all(&results, "itemSectionRenderer", &mut sections);
     for sec in sections {
         if sec.get("sectionIdentifier").and_then(Value::as_str) == Some("comment-item-section") {
-            w.comments_token = sec.pointer("/contents/0/continuationItemRenderer").and_then(continuation_token);
+            w.comments_token = sec
+                .pointer("/contents/0/continuationItemRenderer")
+                .and_then(continuation_token);
         }
     }
     if let Some(panels) = r.get("engagementPanels") {
-        if let Some(items) = find(panels, "sortFilterSubMenuRenderer").and_then(|m| m.get("subMenuItems")).and_then(Value::as_array) {
+        if let Some(items) = find(panels, "sortFilterSubMenuRenderer")
+            .and_then(|m| m.get("subMenuItems"))
+            .and_then(Value::as_array)
+        {
             let tok = |i: usize| {
                 items
                     .get(i)
@@ -1232,10 +1562,15 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
             w.comments_sort = (tok(0), tok(1));
         }
     }
-    if let Some(lc) = find(&r, "liveChatRenderer").filter(|lc| !lc.get("isReplay").and_then(Value::as_bool).unwrap_or(false)) {
+    if let Some(lc) = find(&r, "liveChatRenderer")
+        .filter(|lc| !lc.get("isReplay").and_then(Value::as_bool).unwrap_or(false))
+    {
         // Only the main token works on its own; "Top chat" and "Live chat" differ
         // by one flag inside it (field 1 = 4 for top, 1 for everything).
-        let first = lc.pointer("/continuations/0/reloadContinuationData/continuation").and_then(Value::as_str).map(str::to_string);
+        let first = lc
+            .pointer("/continuations/0/reloadContinuationData/continuation")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let top = first.clone();
         let all = first.map(|t| t.replacen("ggEMCAQY", "ggEMCAEY", 1));
         if let (Some(t), Some(a)) = (top, all) {
@@ -1250,7 +1585,11 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
     let mut found = Vec::new();
     find_all(&r, "chapterRenderer", &mut found);
     for c in found {
-        let start = c.get("timeRangeStartMillis").and_then(Value::as_f64).unwrap_or(0.0) / 1000.0;
+        let start = c
+            .get("timeRangeStartMillis")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+            / 1000.0;
         chapters.push(Chapter {
             title: opt_text(c.get("title")).unwrap_or_default(),
             start,
@@ -1282,11 +1621,25 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
     let mut lists = Vec::new();
     find_all(&r, "macroMarkersListEntity", &mut lists);
     for l in lists {
-        if l.pointer("/markersList/markerType").and_then(Value::as_str) != Some("MARKER_TYPE_HEATMAP") {
+        if l.pointer("/markersList/markerType").and_then(Value::as_str)
+            != Some("MARKER_TYPE_HEATMAP")
+        {
             continue;
         }
-        let num = |v: Option<&Value>| v.and_then(|x| x.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| x.as_f64())).unwrap_or(0.0);
-        for m in l.pointer("/markersList/markers").and_then(Value::as_array).into_iter().flatten() {
+        let num = |v: Option<&Value>| {
+            v.and_then(|x| {
+                x.as_str()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .or_else(|| x.as_f64())
+            })
+            .unwrap_or(0.0)
+        };
+        for m in l
+            .pointer("/markersList/markers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             w.heatmap.push((
                 num(m.get("startMillis")) / 1000.0,
                 num(m.get("durationMillis")) / 1000.0,
@@ -1301,10 +1654,14 @@ pub fn watch_next(video_id: &str, playlist_id: Option<&str>) -> Result<WatchInfo
         w.playlist = Some(WatchPlaylist {
             id: s(pl, "/playlistId").unwrap_or_default(),
             title: s(pl, "/title").unwrap_or_default(),
-            items: page.items.into_iter().filter_map(|i| match i {
-                Item::Video(v) => Some(v),
-                _ => None,
-            }).collect(),
+            items: page
+                .items
+                .into_iter()
+                .filter_map(|i| match i {
+                    Item::Video(v) => Some(v),
+                    _ => None,
+                })
+                .collect(),
         });
     }
     if crate::store::settings_snapshot().original_video_titles {
@@ -1321,10 +1678,19 @@ fn original_video_title(video_id: &str) -> Result<String> {
         json!({ "videoId": video_id }),
         json!({ "client": { "clientName": "WEB", "clientVersion": WEB_VERSION } }),
     )?;
-    let details = response.get("videoDetails").ok_or_else(|| anyhow!("Missing video details"))?;
-    anyhow::ensure!(details.get("videoId").and_then(Value::as_str) == Some(video_id), "Unexpected video ID");
-    details.get("title").and_then(Value::as_str).filter(|title| !title.trim().is_empty())
-        .map(str::to_owned).ok_or_else(|| anyhow!("Missing original video title"))
+    let details = response
+        .get("videoDetails")
+        .ok_or_else(|| anyhow!("Missing video details"))?;
+    anyhow::ensure!(
+        details.get("videoId").and_then(Value::as_str) == Some(video_id),
+        "Unexpected video ID"
+    );
+    details
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("Missing original video title"))
 }
 
 #[cfg(test)]
@@ -1359,7 +1725,8 @@ pub fn chapters_from_description(desc: &str) -> Vec<Chapter> {
         let line = line.trim();
         let mut ts_end = None;
         for (i, w) in line.split_whitespace().enumerate() {
-            let w2 = w.trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == '-');
+            let w2 =
+                w.trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == '-');
             if w2.contains(':') && parse_duration(w2).is_some() {
                 ts_end = Some((i, parse_duration(w2).unwrap()));
                 break;
@@ -1376,12 +1743,22 @@ pub fn chapters_from_description(desc: &str) -> Vec<Chapter> {
                 .map(|(_, w)| w)
                 .collect::<Vec<_>>()
                 .join(" ")
-                .trim_start_matches(|c: char| c == '-' || c == '–' || c == ':' || c == '|' || c.is_whitespace())
+                .trim_start_matches(|c: char| {
+                    c == '-' || c == '–' || c == ':' || c == '|' || c.is_whitespace()
+                })
                 .to_string();
-            out.push(Chapter { title, start: secs as f64, thumbnail: None });
+            out.push(Chapter {
+                title,
+                start: secs as f64,
+                thumbnail: None,
+            });
         }
     }
-    if out.len() >= 3 && out[0].start == 0.0 { out } else { Vec::new() }
+    if out.len() >= 3 && out[0].start == 0.0 {
+        out
+    } else {
+        Vec::new()
+    }
 }
 
 // ───────────────────────── comments ─────────────────────────
@@ -1389,26 +1766,44 @@ pub fn chapters_from_description(desc: &str) -> Vec<Chapter> {
 /// Channel (custom) emojis in a comment's text. Standard emojis are left alone:
 /// they're already Unicode characters in the text.
 fn comment_emojis(props: &Value) -> Vec<(String, String)> {
-    let Some(content) = props.pointer("/content/content").and_then(Value::as_str) else { return Vec::new() };
-    let Some(runs) = props.pointer("/content/attachmentRuns").and_then(Value::as_array) else { return Vec::new() };
+    let Some(content) = props.pointer("/content/content").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let Some(runs) = props
+        .pointer("/content/attachmentRuns")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
     // run offsets count UTF-16 units
     let units: Vec<u16> = content.encode_utf16().collect();
     let mut out: Vec<(String, String)> = Vec::new();
     for r in runs {
-        let Some(url) = r.pointer("/element/type/imageType/image/sources/0/url").and_then(Value::as_str) else { continue };
+        let Some(url) = r
+            .pointer("/element/type/imageType/image/sources/0/url")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
         if url.contains("/s/gaming/emoji/") {
             continue;
         }
         let start = r.get("startIndex").and_then(Value::as_u64).unwrap_or(0) as usize;
         let len = r.get("length").and_then(Value::as_u64).unwrap_or(0) as usize;
-        let Some(span) = units.get(start..start + len) else { continue };
+        let Some(span) = units.get(start..start + len) else {
+            continue;
+        };
         let code = String::from_utf16_lossy(span);
         if code.trim().is_empty() || out.iter().any(|(c, _)| *c == code) {
             continue;
         }
         // sharper than the 16px default, drawn at text size
         let url = match url.rsplit_once('=') {
-            Some((base, _)) if url.contains("googleusercontent.com") || url.contains("ggpht.com") => format!("{base}=w40-h40-c-k-nd"),
+            Some((base, _))
+                if url.contains("googleusercontent.com") || url.contains("ggpht.com") =>
+            {
+                format!("{base}=w40-h40-c-k-nd")
+            }
             _ => url.to_string(),
         };
         out.push((code, url));
@@ -1423,7 +1818,9 @@ pub fn comments(token: &str) -> Result<CommentPage> {
 
 pub(crate) fn account_comments(token: &str) -> Result<CommentPage> {
     if let Some(account) = super::web::session_identity() {
-        if let Ok(response) = super::web::web_call_for_session(&account, "next", json!({ "continuation": token })) {
+        if let Ok(response) =
+            super::web::web_call_for_session(&account, "next", json!({ "continuation": token }))
+        {
             let mut page = parse_comments(&response);
             page.account = Some(account);
             return Ok(page);
@@ -1436,29 +1833,56 @@ pub(crate) fn post_comment(account: &std::sync::Arc<()>, params: &str, text: &st
     let text = text.trim();
     anyhow::ensure!(!text.is_empty(), "Enter a comment first");
     let response = super::web::web_call_for_session(
-        account, "comment/create_comment", json!({ "createCommentParams": params, "commentText": text }),
+        account,
+        "comment/create_comment",
+        json!({ "createCommentParams": params, "commentText": text }),
     )?;
-    anyhow::ensure!(response.get("error").is_none(), "YouTube refused the comment");
+    anyhow::ensure!(
+        response.get("error").is_none(),
+        "YouTube refused the comment"
+    );
     Ok(())
 }
 
 pub(crate) fn react_to_comment(account: &std::sync::Arc<()>, actions: &[String]) -> Result<()> {
     anyhow::ensure!(!actions.is_empty(), "This comment has no reaction command");
-    let response = super::web::web_call_for_session(account, "comment/perform_comment_action", json!({ "actions": actions }))?;
-    anyhow::ensure!(response.get("error").is_none(), "YouTube refused the reaction");
+    let response = super::web::web_call_for_session(
+        account,
+        "comment/perform_comment_action",
+        json!({ "actions": actions }),
+    )?;
+    anyhow::ensure!(
+        response.get("error").is_none(),
+        "YouTube refused the reaction"
+    );
     Ok(())
 }
 
 fn create_comment_params(node: &Value) -> Option<String> {
-    find(node, "createCommentEndpoint")?.get("createCommentParams")?.as_str().filter(|s| !s.is_empty()).map(str::to_owned)
+    find(node, "createCommentEndpoint")?
+        .get("createCommentParams")?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
 }
 
 fn reaction_actions(node: Option<&Value>) -> Vec<String> {
-    let Some(endpoint) = node.and_then(|n| find(n, "performCommentActionEndpoint")) else { return Vec::new() };
+    let Some(endpoint) = node.and_then(|n| find(n, "performCommentActionEndpoint")) else {
+        return Vec::new();
+    };
     if let Some(actions) = endpoint.get("actions").and_then(Value::as_array) {
-        return actions.iter().filter_map(Value::as_str).map(str::to_owned).collect();
+        return actions
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
     }
-    endpoint.get("action").and_then(Value::as_str).map(str::to_owned).into_iter().collect()
+    endpoint
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .into_iter()
+        .collect()
 }
 
 fn parse_comments(r: &Value) -> CommentPage {
@@ -1468,9 +1892,16 @@ fn parse_comments(r: &Value) -> CommentPage {
     let mut toolbar_states = std::collections::HashMap::new();
     let mut toolbar_surfaces = std::collections::HashMap::new();
     let mut surfaces = std::collections::HashMap::new();
-    if let Some(muts) = r.pointer("/frameworkUpdates/entityBatchUpdate/mutations").and_then(Value::as_array) {
+    if let Some(muts) = r
+        .pointer("/frameworkUpdates/entityBatchUpdate/mutations")
+        .and_then(Value::as_array)
+    {
         for m in muts {
-            let key = m.get("entityKey").and_then(Value::as_str).unwrap_or_default().to_string();
+            let key = m
+                .get("entityKey")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             if let Some(p) = m.pointer("/payload/commentEntityPayload") {
                 payloads.insert(key, p.clone());
             } else if let Some(p) = m.pointer("/payload/engagementToolbarStateEntityPayload") {
@@ -1486,8 +1917,14 @@ fn parse_comments(r: &Value) -> CommentPage {
     for key in ["onResponseReceivedEndpoints", "onResponseReceivedActions"] {
         if let Some(arr) = r.get(key).and_then(Value::as_array) {
             for e in arr {
-                for k in ["reloadContinuationItemsCommand", "appendContinuationItemsAction"] {
-                    if let Some(items) = e.pointer(&format!("/{k}/continuationItems")).and_then(Value::as_array) {
+                for k in [
+                    "reloadContinuationItemsCommand",
+                    "appendContinuationItemsAction",
+                ] {
+                    if let Some(items) = e
+                        .pointer(&format!("/{k}/continuationItems"))
+                        .and_then(Value::as_array)
+                    {
                         lists.extend(items.iter().cloned());
                     }
                 }
@@ -1515,34 +1952,58 @@ fn parse_comments(r: &Value) -> CommentPage {
             }
         }
         let (vm, thread) = if let Some(t) = it.get("commentThreadRenderer") {
-            (t.get("commentViewModel").map(|c| c.get("commentViewModel").unwrap_or(c)), Some(t))
+            (
+                t.get("commentViewModel")
+                    .map(|c| c.get("commentViewModel").unwrap_or(c)),
+                Some(t),
+            )
         } else if let Some(c) = it.get("commentViewModel") {
             (Some(c), None)
         } else {
             (None, None)
         };
         if let Some(vm) = vm {
-            let key = vm.get("commentKey").and_then(Value::as_str).unwrap_or_default();
+            let key = vm
+                .get("commentKey")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if let Some(p) = payloads.get(key) {
                 let props = p.get("properties").cloned().unwrap_or(Value::Null);
                 let author = p.get("author").cloned().unwrap_or(Value::Null);
                 let toolbar = p.get("toolbar").cloned().unwrap_or(Value::Null);
-                let state_key = vm.get("toolbarStateKey").and_then(Value::as_str).unwrap_or_default();
+                let state_key = vm
+                    .get("toolbarStateKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let state = toolbar_states.get(state_key);
                 let hearted = state
                     .and_then(|s| s.get("heartState"))
                     .and_then(Value::as_str)
                     .map(|s| s.contains("HEARTED") && !s.contains("UNHEARTED"))
                     .unwrap_or(false);
-                let liked = state.and_then(|s| s.get("likeState")).and_then(Value::as_str) == Some("TOOLBAR_LIKE_STATE_LIKED");
-                let surface = vm.get("toolbarSurfaceKey").and_then(Value::as_str).and_then(|key| toolbar_surfaces.get(key));
+                let liked = state
+                    .and_then(|s| s.get("likeState"))
+                    .and_then(Value::as_str)
+                    == Some("TOOLBAR_LIKE_STATE_LIKED");
+                let surface = vm
+                    .get("toolbarSurfaceKey")
+                    .and_then(Value::as_str)
+                    .and_then(|key| toolbar_surfaces.get(key));
                 let actions = CommentActions {
                     like: reaction_actions(surface.and_then(|s| s.get("likeCommand"))),
                     unlike: reaction_actions(surface.and_then(|s| s.get("unlikeCommand"))),
-                    reply: surface.and_then(|s| s.get("replyCommand")).and_then(create_comment_params),
+                    reply: surface
+                        .and_then(|s| s.get("replyCommand"))
+                        .and_then(create_comment_params),
                     liked,
-                    unliked_count: s(&toolbar, "/likeCountNotliked").unwrap_or_default().trim().to_string(),
-                    liked_count: s(&toolbar, "/likeCountLiked").unwrap_or_default().trim().to_string(),
+                    unliked_count: s(&toolbar, "/likeCountNotliked")
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                    liked_count: s(&toolbar, "/likeCountLiked")
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
                 };
                 let replies_token = thread
                     .and_then(|t| t.pointer("/replies/commentRepliesRenderer/contents"))
@@ -1556,11 +2017,21 @@ fn parse_comments(r: &Value) -> CommentPage {
                     author_avatar: s(&author, "/avatarThumbnailUrl"),
                     text: s(&props, "/content/content").unwrap_or_default(),
                     published: s(&props, "/publishedTime").unwrap_or_default(),
-                    likes: if liked { actions.liked_count.clone() } else { actions.unliked_count.clone() },
+                    likes: if liked {
+                        actions.liked_count.clone()
+                    } else {
+                        actions.unliked_count.clone()
+                    },
                     reply_count: s(&toolbar, "/replyCount").unwrap_or_default(),
                     replies_token,
-                    is_creator: author.get("isCreator").and_then(Value::as_bool).unwrap_or(false),
-                    is_verified: author.get("isVerified").and_then(Value::as_bool).unwrap_or(false),
+                    is_creator: author
+                        .get("isCreator")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    is_verified: author
+                        .get("isVerified")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     is_pinned: vm.get("pinnedText").is_some(),
                     hearted,
                     actions,
@@ -1569,10 +2040,13 @@ fn parse_comments(r: &Value) -> CommentPage {
                         .get("commentSurfaceKey")
                         .and_then(Value::as_str)
                         .and_then(|k| surfaces.get(k))
-                        .and_then(|s| s.pointer("/imageAttachmentViewModel/commentImageAttachmentViewModel"))
+                        .and_then(|s| {
+                            s.pointer("/imageAttachmentViewModel/commentImageAttachmentViewModel")
+                        })
                         .and_then(|a| {
                             let url = a.pointer("/image/sources/0/url")?.as_str()?.to_string();
-                            let ratio = a.get("aspectRatio").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+                            let ratio =
+                                a.get("aspectRatio").and_then(Value::as_f64).unwrap_or(1.0) as f32;
                             Some((url, ratio.clamp(0.2, 5.0)))
                         }),
                 });
@@ -1659,7 +2133,8 @@ mod tests {
     #[test]
     fn ads_are_skipped() {
         let mut ad_lockup = lockup("adVid000001", "Buy now");
-        ad_lockup["lockupViewModel"]["rendererContext"] = json!({ "loggingContext": { "adClientParams": { "x": 1 } } });
+        ad_lockup["lockupViewModel"]["rendererContext"] =
+            json!({ "loggingContext": { "adClientParams": { "x": 1 } } });
         let feed = json!({ "contents": [
             { "richItemRenderer": { "content": lockup("realVid0001", "A real video") } },
             // the home feed's in-feed ad slot
@@ -1674,15 +2149,25 @@ mod tests {
             { "videoRenderer": { "videoId": "realVid0002", "title": { "simpleText": "Another real one" },
                 "badges": [{ "metadataBadgeRenderer": { "style": "BADGE_STYLE_TYPE_SIMPLE", "label": "New" } }] } },
         ]});
-        let ids: Vec<String> = collect_items(&feed).items.iter().filter_map(|i| i.as_video().map(|v| v.id.clone())).collect();
+        let ids: Vec<String> = collect_items(&feed)
+            .items
+            .iter()
+            .filter_map(|i| i.as_video().map(|v| v.id.clone()))
+            .collect();
         assert_eq!(ids, vec!["realVid0001", "realVid0002"]);
     }
 
     #[test]
     fn filter_encoding() {
-        let f = SearchFilter { kind: 1, ..Default::default() };
+        let f = SearchFilter {
+            kind: 1,
+            ..Default::default()
+        };
         assert_eq!(f.encode().unwrap(), "EgIQAQ==");
-        let f = SearchFilter { sort: 2, ..Default::default() };
+        let f = SearchFilter {
+            sort: 2,
+            ..Default::default()
+        };
         assert_eq!(f.encode().unwrap(), "CAI=");
     }
 
@@ -1707,9 +2192,18 @@ mod tests {
 
     #[test]
     fn url_parse() {
-        assert_eq!(parse_youtube_url("https://youtu.be/dQw4w9WgXcQ?t=1"), Some(ResolvedUrl::Video("dQw4w9WgXcQ".into())));
-        assert_eq!(parse_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=x"), Some(ResolvedUrl::Video("dQw4w9WgXcQ".into())));
-        assert_eq!(parse_youtube_url("https://www.youtube.com/shorts/oImytUi5y-w"), Some(ResolvedUrl::Video("oImytUi5y-w".into())));
+        assert_eq!(
+            parse_youtube_url("https://youtu.be/dQw4w9WgXcQ?t=1"),
+            Some(ResolvedUrl::Video("dQw4w9WgXcQ".into()))
+        );
+        assert_eq!(
+            parse_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=x"),
+            Some(ResolvedUrl::Video("dQw4w9WgXcQ".into()))
+        );
+        assert_eq!(
+            parse_youtube_url("https://www.youtube.com/shorts/oImytUi5y-w"),
+            Some(ResolvedUrl::Video("oImytUi5y-w".into()))
+        );
     }
 
     fn description_run(start: u64, length: u64, command: Value) -> Value {
@@ -1725,12 +2219,21 @@ mod tests {
             description_run(18, 7, json!({ "browseEndpoint": { "browseId": "UCExample" } })),
         ] });
         let links = description_links(&runs, text);
-        let links: Vec<_> = links.iter().map(|link| (&text[link.range.clone()], link.url.as_str())).collect();
-        assert_eq!(links, [
-            ("Video", "https://www.youtube.com/watch?v=_0do0jAoJt8&list=PLExample&t=42"),
-            ("List", "https://www.youtube.com/playlist?list=PLExample"),
-            ("Channel", "https://www.youtube.com/channel/UCExample"),
-        ]);
+        let links: Vec<_> = links
+            .iter()
+            .map(|link| (&text[link.range.clone()], link.url.as_str()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                (
+                    "Video",
+                    "https://www.youtube.com/watch?v=_0do0jAoJt8&list=PLExample&t=42"
+                ),
+                ("List", "https://www.youtube.com/playlist?list=PLExample"),
+                ("Channel", "https://www.youtube.com/channel/UCExample"),
+            ]
+        );
     }
 
     #[test]
@@ -1758,7 +2261,12 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for number in 1..=3 {
             let before = seen.len();
-            for video in page.items.iter().filter_map(Item::as_video).filter(|v| !v.is_short) {
+            for video in page
+                .items
+                .iter()
+                .filter_map(Item::as_video)
+                .filter(|v| !v.is_short)
+            {
                 assert!(!video.title.is_empty());
                 seen.insert(video.id.clone());
             }
@@ -1775,13 +2283,29 @@ mod tests {
     #[ignore]
     fn live_watch() {
         let w = watch_next("dQw4w9WgXcQ", None).unwrap();
-        println!("{} | {} | {:?} | {} related | likes {:?} | chapters {}", w.title, w.channel.name, w.channel.subscribers_text, w.related.len(), w.likes_text, w.chapters.len());
+        println!(
+            "{} | {} | {:?} | {} related | likes {:?} | chapters {}",
+            w.title,
+            w.channel.name,
+            w.channel.subscribers_text,
+            w.related.len(),
+            w.likes_text,
+            w.chapters.len()
+        );
         assert!(!w.title.is_empty());
         assert!(w.related.len() > 3);
         let c = comments(w.comments_token.as_ref().unwrap()).unwrap();
-        println!("{} comments, first: {:?}", c.comments.len(), c.comments.first());
+        println!(
+            "{} comments, first: {:?}",
+            c.comments.len(),
+            c.comments.first()
+        );
         assert!(c.comments.len() > 5);
-        let first_with_replies = c.comments.iter().find(|c| c.replies_token.is_some()).unwrap();
+        let first_with_replies = c
+            .comments
+            .iter()
+            .find(|c| c.replies_token.is_some())
+            .unwrap();
         let replies = comments(first_with_replies.replies_token.as_ref().unwrap()).unwrap();
         assert!(!replies.comments.is_empty());
     }
@@ -1790,7 +2314,11 @@ mod tests {
     #[ignore]
     fn live_channel_playlist() {
         let c = channel("UCsBjURrPoezykLs9EqgamOA", None).unwrap();
-        println!("{:?} tabs={:?}", c.info, c.tabs.iter().map(|t| &t.title).collect::<Vec<_>>());
+        println!(
+            "{:?} tabs={:?}",
+            c.info,
+            c.tabs.iter().map(|t| &t.title).collect::<Vec<_>>()
+        );
         let vt = c.tabs.iter().find(|t| t.kind == "videos").unwrap();
         let v = channel("UCsBjURrPoezykLs9EqgamOA", vt.params.as_deref()).unwrap();
         assert!(v.page.items.len() > 10);
@@ -1811,12 +2339,22 @@ mod chapter_tests {
     #[test]
     #[ignore]
     fn live_chapters() {
-        for q in ["bayes theorem in artificial intelligence sudhakar atchala", "iphone 17 pro review", "rust tutorial full course"] {
+        for q in [
+            "bayes theorem in artificial intelligence sudhakar atchala",
+            "iphone 17 pro review",
+            "rust tutorial full course",
+        ] {
             let p = search(q, &SearchFilter::default()).unwrap();
             for it in p.items.iter().take(4) {
                 if let Item::Video(v) = it {
                     let w = watch_next(&v.id, None).unwrap();
-                    println!("{} [{}] chapters={} first={:?}", v.title, v.id, w.chapters.len(), w.chapters.get(1).map(|c| (&c.title, c.start)));
+                    println!(
+                        "{} [{}] chapters={} first={:?}",
+                        v.title,
+                        v.id,
+                        w.chapters.len(),
+                        w.chapters.get(1).map(|c| (&c.title, c.start))
+                    );
                 }
             }
         }
@@ -1834,7 +2372,10 @@ mod tv_parse_tests {
         let p = collect_items(&v);
         for it in p.items.iter().take(6) {
             if let Item::Video(v) = it {
-                println!("{} | {} | {:?} | {:?} | {:?} | {:?}", v.id, v.title, v.channel_name, v.channel_id, v.views_text, v.duration_text);
+                println!(
+                    "{} | {} | {:?} | {:?} | {:?} | {:?}",
+                    v.id, v.title, v.channel_name, v.channel_id, v.views_text, v.duration_text
+                );
             }
         }
         println!("items={} cont={}", p.items.len(), p.continuation.is_some());
@@ -1852,7 +2393,10 @@ fn chat_text(msg: Option<&Value>) -> String {
         if let Some(t) = r.get("text").and_then(Value::as_str) {
             out.push_str(t);
         } else if let Some(e) = r.get("emoji") {
-            let custom = e.get("isCustomEmoji").and_then(Value::as_bool).unwrap_or(false);
+            let custom = e
+                .get("isCustomEmoji")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let s = if custom {
                 e.pointer("/shortcuts/0").and_then(Value::as_str)
             } else {
@@ -1874,18 +2418,29 @@ fn chat_message(item: &Value) -> Option<ChatMessage> {
     };
     let mut role = ChatRole::Viewer;
     let mut verified = false;
-    for b in r.get("authorBadges").and_then(Value::as_array).into_iter().flatten() {
+    for b in r
+        .get("authorBadges")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let b = b.get("liveChatAuthorBadgeRenderer").unwrap_or(b);
         match b.pointer("/icon/iconType").and_then(Value::as_str) {
             Some("OWNER") => role = ChatRole::Owner,
             Some("MODERATOR") if role != ChatRole::Owner => role = ChatRole::Moderator,
             Some("VERIFIED") => verified = true,
-            None if b.get("customThumbnail").is_some() && role == ChatRole::Viewer => role = ChatRole::Member,
+            None if b.get("customThumbnail").is_some() && role == ChatRole::Viewer => {
+                role = ChatRole::Member
+            }
             _ => {}
         }
     }
     Some(ChatMessage {
-        id: r.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+        id: r
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         author: opt_text(r.get("authorName")).unwrap_or_default(),
         author_photo: r.get("authorPhoto").and_then(best_thumb),
         text: chat_text(r.get("message")),
@@ -1898,16 +2453,36 @@ fn chat_message(item: &Value) -> Option<ChatMessage> {
 /// One poll of a live chat. Reading needs no account.
 pub fn live_chat(token: &str) -> Result<ChatBatch> {
     let r = call("live_chat/get_live_chat", json!({ "continuation": token }))?;
-    let c = r.pointer("/continuationContents/liveChatContinuation").ok_or_else(|| anyhow!("chat has ended"))?;
-    let mut batch = ChatBatch { timeout_ms: 5000, ..Default::default() };
-    for a in c.get("actions").and_then(Value::as_array).into_iter().flatten() {
+    let c = r
+        .pointer("/continuationContents/liveChatContinuation")
+        .ok_or_else(|| anyhow!("chat has ended"))?;
+    let mut batch = ChatBatch {
+        timeout_ms: 5000,
+        ..Default::default()
+    };
+    for a in c
+        .get("actions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if let Some(m) = a.pointer("/addChatItemAction/item").and_then(chat_message) {
             batch.messages.push(m);
         }
     }
-    if let Some(next) = c.pointer("/continuations/0").and_then(Value::as_object).and_then(|o| o.values().next()) {
-        batch.next = next.get("continuation").and_then(Value::as_str).map(str::to_string);
-        batch.timeout_ms = next.get("timeoutMs").and_then(Value::as_u64).unwrap_or(5000);
+    if let Some(next) = c
+        .pointer("/continuations/0")
+        .and_then(Value::as_object)
+        .and_then(|o| o.values().next())
+    {
+        batch.next = next
+            .get("continuation")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        batch.timeout_ms = next
+            .get("timeoutMs")
+            .and_then(Value::as_u64)
+            .unwrap_or(5000);
     }
     Ok(batch)
 }
@@ -1919,7 +2494,11 @@ mod heatmap_tests {
     fn live_heatmap() {
         for id in ["dQw4w9WgXcQ", "kJQP7kiw5Fk", "LXb3EKWsInQ"] {
             let w = super::watch_next(id, None).unwrap();
-            println!("{id}: heatmap={} chapters={}", w.heatmap.len(), w.chapters.len());
+            println!(
+                "{id}: heatmap={} chapters={}",
+                w.heatmap.len(),
+                w.chapters.len()
+            );
         }
     }
 }
@@ -1953,7 +2532,10 @@ mod tile_tests {
         assert_eq!(v.views_text.as_deref(), Some("Point • 13 episodes"));
         assert!(v.duration_text.is_none());
         // opening the card shows the show's playlist, without the "VL" of the browse id
-        assert_eq!(v.playlist_id.as_deref(), Some("PLgZ8mBDMf-VTsBkM3YatTRCblZjbIBN0Q"));
+        assert_eq!(
+            v.playlist_id.as_deref(),
+            Some("PLgZ8mBDMf-VTsBkM3YatTRCblZjbIBN0Q")
+        );
     }
 
     /// Some shows play their latest episode together with the show's own list.
@@ -1973,7 +2555,10 @@ mod tile_tests {
         assert_eq!(v.title, "Episode");
         assert_eq!(v.channel_name, "Channel");
         assert_eq!(v.views_text.as_deref(), Some("A show • 49 episodes"));
-        assert_eq!(v.playlist_id.as_deref(), Some("OLa8Qyc44XfVYUHLvQqGvlBHDYTk1cx-n6Q"));
+        assert_eq!(
+            v.playlist_id.as_deref(),
+            Some("OLa8Qyc44XfVYUHLvQqGvlBHDYTk1cx-n6Q")
+        );
     }
 
     /// An ordinary tile keeps its own title, channel, views and date.
@@ -2000,7 +2585,10 @@ mod long_playlist_tests {
     use super::*;
 
     fn video(id: &str) -> VideoItem {
-        VideoItem { id: id.to_string(), ..Default::default() }
+        VideoItem {
+            id: id.to_string(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -2056,7 +2644,9 @@ mod long_playlist_tests {
         let mut page = super::playlist(pid).unwrap();
         let mut vids = page.videos.clone();
         while vids.len() < 420 {
-            let Some(t) = page.continuation.take() else { break };
+            let Some(t) = page.continuation.take() else {
+                break;
+            };
             let p = super::browse_continue(&t).unwrap();
             vids.extend(p.items.into_iter().filter_map(|i| i.as_video().cloned()));
             page.continuation = p.continuation;
@@ -2068,10 +2658,17 @@ mod long_playlist_tests {
             let Some(v) = vids.get(at) else { continue };
             let w = super::watch_next(&v.id, Some(pid)).unwrap();
             let items = w.playlist.map(|p| p.items).unwrap_or_default();
-            let first = items.first().and_then(|f| vids.iter().position(|x| x.id == f.id));
-            let last = items.last().and_then(|f| vids.iter().position(|x| x.id == f.id));
+            let first = items
+                .first()
+                .and_then(|f| vids.iter().position(|x| x.id == f.id));
+            let last = items
+                .last()
+                .and_then(|f| vids.iter().position(|x| x.id == f.id));
             let me = items.iter().position(|x| x.id == v.id);
-            eprintln!("at {at}: window {} items, first={first:?} last={last:?} me={me:?}", items.len());
+            eprintln!(
+                "at {at}: window {} items, first={first:?} last={last:?} me={me:?}",
+                items.len()
+            );
         }
     }
 }
@@ -2097,12 +2694,17 @@ mod channel_tab_tests {
                 } } } }]
             }
         }));
-        let [Item::Playlist(show)] = page.items.as_slice() else { panic!("missing show card") };
+        let [Item::Playlist(show)] = page.items.as_slice() else {
+            panic!("missing show card")
+        };
         assert_eq!(show.id, "PLExampleShow");
         assert_eq!(show.title, "Creator show");
         assert_eq!(show.channel_name.as_deref(), Some("Creator"));
         assert_eq!(show.video_count_text.as_deref(), Some("7 episodes"));
-        assert_eq!(show.thumbnail.as_deref(), Some("https://i.ytimg.com/vi/example/hqdefault.jpg"));
+        assert_eq!(
+            show.thumbnail.as_deref(),
+            Some("https://i.ytimg.com/vi/example/hqdefault.jpg")
+        );
     }
 
     #[test]
@@ -2110,13 +2712,31 @@ mod channel_tab_tests {
     fn channel_show_tabs_open_episode_lists() {
         for id in ["UCGGZ_POGmIWG1pQXTDzQv-g", "UCPD_bxCRGpmmeQcbe2kpPaA"] {
             let channel = super::channel(id, Some(crate::feed::VIDEOS_TAB)).unwrap();
-            let tab = channel.tabs.iter().find(|tab| tab.kind == "shows").expect("shows tab");
+            let tab = channel
+                .tabs
+                .iter()
+                .find(|tab| tab.kind == "shows")
+                .expect("shows tab");
             let page = super::channel(id, tab.params.as_deref()).unwrap();
-            let show = page.page.items.iter().find_map(|item| {
-                if let Item::Playlist(show) = item { Some(show) } else { None }
-            }).expect("show card");
+            let show = page
+                .page
+                .items
+                .iter()
+                .find_map(|item| {
+                    if let Item::Playlist(show) = item {
+                        Some(show)
+                    } else {
+                        None
+                    }
+                })
+                .expect("show card");
             let episodes = super::playlist(&show.id).unwrap().videos;
-            eprintln!("{}: {} ({} episodes loaded)", channel.info.name, show.title, episodes.len());
+            eprintln!(
+                "{}: {} ({} episodes loaded)",
+                channel.info.name,
+                show.title,
+                episodes.len()
+            );
             assert!(!episodes.is_empty());
         }
     }
@@ -2128,10 +2748,17 @@ mod channel_tab_tests {
         crate::store::update_settings(|s| s.language = "tr".into());
         let page = super::channel("UCBJycsmduvYEL83R_U4JriQ", None).unwrap();
         crate::store::update_settings(|s| s.language = "en".into());
-        let kinds: Vec<_> = page.tabs.iter().map(|t| (t.title.clone(), t.kind.clone())).collect();
+        let kinds: Vec<_> = page
+            .tabs
+            .iter()
+            .map(|t| (t.title.clone(), t.kind.clone()))
+            .collect();
         eprintln!("{kinds:?}");
         for k in ["featured", "videos", "shorts", "playlists"] {
-            assert!(kinds.iter().any(|(_, kind)| kind == k), "no {k} tab in {kinds:?}");
+            assert!(
+                kinds.iter().any(|(_, kind)| kind == k),
+                "no {k} tab in {kinds:?}"
+            );
         }
     }
 }

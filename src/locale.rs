@@ -234,5 +234,8 @@ pub const REGIONS: &[(&str, &str)] = &[
 
 /// Display name for a code from `list`, or the code itself.
 pub fn name<'a>(list: &[(&str, &'a str)], code: &'a str) -> &'a str {
-    list.iter().find(|(c, _)| c.eq_ignore_ascii_case(code)).map(|(_, n)| *n).unwrap_or(code)
+    list.iter()
+        .find(|(c, _)| c.eq_ignore_ascii_case(code))
+        .map(|(_, n)| *n)
+        .unwrap_or(code)
 }

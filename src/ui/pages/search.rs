@@ -123,7 +123,9 @@ impl SearchPage {
                         if let Some(items) = this.items.ready_mut() {
                             append_results(Arc::make_mut(items), p.items);
                         }
-                        this.continuation = p.continuation.filter(|next| this.continuation.as_ref() != Some(next));
+                        this.continuation = p
+                            .continuation
+                            .filter(|next| this.continuation.as_ref() != Some(next));
                         this.rows_settings = None;
                     }
                     Err(_) => this.more_failed = true,
@@ -139,7 +141,11 @@ impl SearchPage {
         let Some(items) = self.items.ready() else {
             return false;
         };
-        if self.rows_settings.as_ref().is_some_and(|current| Arc::ptr_eq(current, settings)) {
+        if self
+            .rows_settings
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, settings))
+        {
             return false;
         }
 
@@ -174,21 +180,38 @@ impl SearchPage {
         if old_count != rows.len() {
             self.scroll.splice(shared..old_count, rows.len() - shared);
         }
-        if let Some(first_changed) = self.rows.iter().zip(&rows).position(|(old, new)| old != new) {
+        if let Some(first_changed) = self
+            .rows
+            .iter()
+            .zip(&rows)
+            .position(|(old, new)| old != new)
+        {
             self.scroll.remeasure_items(first_changed..shared);
         }
         self.rows = Arc::new(rows);
         true
     }
 
-    fn filter_group(&self, title: &str, options: &[(&str, u8)], current: u8, set: fn(&mut SearchFilter, u8), cx: &mut Context<Self>) -> Div {
+    fn filter_group(
+        &self,
+        title: &str,
+        options: &[(&str, u8)],
+        current: u8,
+        set: fn(&mut SearchFilter, u8),
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = pal(cx);
-        let mut col = div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w(px(150.))
-            .child(div().pb_3().mb_2().border_b_1().border_color(p.border).text_xs().font_weight(FontWeight::BOLD).text_color(p.text).child(t(title).to_uppercase()));
+        let mut col = div().flex().flex_col().flex_1().min_w(px(150.)).child(
+            div()
+                .pb_3()
+                .mb_2()
+                .border_b_1()
+                .border_color(p.border)
+                .text_xs()
+                .font_weight(FontWeight::BOLD)
+                .text_color(p.text)
+                .child(t(title).to_uppercase()),
+        );
         for (label, v) in options {
             let v = *v;
             let active = current == v && v != 0;
@@ -212,7 +235,13 @@ impl SearchPage {
         col
     }
 
-    fn feature(&self, label: &str, on: bool, toggle: fn(&mut SearchFilter), cx: &mut Context<Self>) -> Stateful<Div> {
+    fn feature(
+        &self,
+        label: &str,
+        on: bool,
+        toggle: fn(&mut SearchFilter),
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let p = pal(cx);
         div()
             .id(SharedString::from(format!("feat-{label}")))
@@ -235,7 +264,11 @@ impl Render for SearchPage {
         let p = pal(cx);
         let available = content_width(cx);
         let width = available.min(px(1280.));
-        let thumb_w = if width < px(900.) { px(240.).min(width * 0.45) } else { px(360.) };
+        let thumb_w = if width < px(900.) {
+            px(240.).min(width * 0.45)
+        } else {
+            px(360.)
+        };
         let rows_changed = self.sync_rows(&store::settings_snapshot());
         let geometry = (available, window.rem_size());
         let resized = self.row_geometry != geometry;
@@ -265,57 +298,134 @@ impl Render for SearchPage {
         }
         let f = self.filter;
         let header = div()
-            .flex()
+            .flex_row_dir(cx)
             .flex_wrap()
             .gap_2()
             .items_center()
             .justify_between()
             .pb_2()
             .child(
-                div().flex().flex_wrap().gap_2().children(
-                    [("All", 0u8), ("Videos", 1), ("Channels", 2), ("Playlists", 3), ("Movies", 4)].into_iter().map(|(l, k)| {
-                        chip(SharedString::from(format!("t-{l}")), t(l), f.kind == k, cx).on_click(cx.listener(move |this, _, _, cx| {
-                            this.filter.kind = k;
-                            this.load(cx);
-                        }))
+                div().flex_row_dir(cx).flex_wrap().gap_2().children(
+                    [
+                        ("All", 0u8),
+                        ("Videos", 1),
+                        ("Channels", 2),
+                        ("Playlists", 3),
+                        ("Movies", 4),
+                    ]
+                    .into_iter()
+                    .map(|(l, k)| {
+                        chip(SharedString::from(format!("t-{l}")), t(l), f.kind == k, cx).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.filter.kind = k;
+                                this.load(cx);
+                            }),
+                        )
                     }),
                 ),
             )
             .child(
-                pill("filters", Some("sliders-horizontal"), if f.is_default() { "Filters" } else { "Filters (active)" }, cx).on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.show_filters ^= true;
-                        cx.notify();
-                    }),
-                ),
+                pill(
+                    "filters",
+                    Some("sliders-horizontal"),
+                    if f.is_default() {
+                        "Filters"
+                    } else {
+                        "Filters (active)"
+                    },
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_filters ^= true;
+                    cx.notify();
+                })),
             );
         let filters = self.show_filters.then(|| {
             div()
-                .flex()
+                .flex_row_dir(cx)
                 .flex_wrap()
                 .gap_6()
                 .p_4()
                 .mb_4()
                 .rounded_xl()
                 .bg(p.surface)
-                .child(self.filter_group("Upload date", &[("Last hour", 1), ("Today", 2), ("This week", 3), ("This month", 4), ("This year", 5)], f.date, |f, v| f.date = v, cx))
-                .child(self.filter_group("Type", &[("Video", 1), ("Channel", 2), ("Playlist", 3), ("Movie", 4)], f.kind, |f, v| f.kind = v, cx))
-                .child(self.filter_group("Duration", &[("Under 4 minutes", 1), ("4 - 20 minutes", 3), ("Over 20 minutes", 2)], f.duration, |f, v| f.duration = v, cx))
+                .child(self.filter_group(
+                    "Upload date",
+                    &[
+                        ("Last hour", 1),
+                        ("Today", 2),
+                        ("This week", 3),
+                        ("This month", 4),
+                        ("This year", 5),
+                    ],
+                    f.date,
+                    |f, v| f.date = v,
+                    cx,
+                ))
+                .child(self.filter_group(
+                    "Type",
+                    &[("Video", 1), ("Channel", 2), ("Playlist", 3), ("Movie", 4)],
+                    f.kind,
+                    |f, v| f.kind = v,
+                    cx,
+                ))
+                .child(self.filter_group(
+                    "Duration",
+                    &[
+                        ("Under 4 minutes", 1),
+                        ("4 - 20 minutes", 3),
+                        ("Over 20 minutes", 2),
+                    ],
+                    f.duration,
+                    |f, v| f.duration = v,
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .flex_1()
                         .min_w(px(150.))
-                        .child(div().pb_3().mb_2().border_b_1().border_color(p.border).text_xs().font_weight(FontWeight::BOLD).text_color(p.text).child(t("FEATURES")))
+                        .child(
+                            div()
+                                .pb_3()
+                                .mb_2()
+                                .border_b_1()
+                                .border_color(p.border)
+                                .text_xs()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(p.text)
+                                .child(t("FEATURES")),
+                        )
                         .child(self.feature("Live", f.live, |f| f.live ^= true, cx))
                         .child(self.feature("4K", f.four_k, |f| f.four_k ^= true, cx))
                         .child(self.feature("HD", f.hd, |f| f.hd ^= true, cx))
-                        .child(self.feature("Subtitles/CC", f.subtitles, |f| f.subtitles ^= true, cx))
-                        .child(self.feature("Creative Commons", f.creative_commons, |f| f.creative_commons ^= true, cx))
+                        .child(self.feature(
+                            "Subtitles/CC",
+                            f.subtitles,
+                            |f| f.subtitles ^= true,
+                            cx,
+                        ))
+                        .child(self.feature(
+                            "Creative Commons",
+                            f.creative_commons,
+                            |f| f.creative_commons ^= true,
+                            cx,
+                        ))
                         .child(self.feature("HDR", f.hdr, |f| f.hdr ^= true, cx)),
                 )
-                .child(self.filter_group("Sort by", &[("Relevance", 0), ("Upload date", 2), ("View count", 3), ("Rating", 1)], f.sort, |f, v| f.sort = v, cx))
+                .child(self.filter_group(
+                    "Sort by",
+                    &[
+                        ("Relevance", 0),
+                        ("Upload date", 2),
+                        ("View count", 3),
+                        ("Rating", 1),
+                    ],
+                    f.sort,
+                    |f, v| f.sort = v,
+                    cx,
+                ))
         });
         let controls = div()
             .id("search-controls")
@@ -324,7 +434,12 @@ impl Render for SearchPage {
             .overflow_y_scroll()
             .px_6()
             .pt_4()
-            .child(div().flex().justify_center().child(div().w(width).child(header).children(filters)));
+            .child(
+                div()
+                    .flex()
+                    .justify_center()
+                    .child(div().w(width).child(header).children(filters)),
+            );
         let body = match &self.items {
             Load::Loading => spinner(cx).into_any_element(),
             Load::Error(e) => error_state(e, cx).into_any_element(),
@@ -349,27 +464,54 @@ impl Render for SearchPage {
                             .border_t_1()
                             .border_b_1()
                             .border_color(p.border)
-                            .child(div().flex().items_center().gap_2().child(icon("zap").text_color(p.accent)).child(section_title("Shorts", cx)))
-                            .child(div().flex().gap_4().overflow_hidden().children(
-                                indices.iter().filter_map(|&index| items[index].as_video()).map(|video| shorts_card(video, px(190.), cx)),
-                            ))
+                            .child(
+                                div()
+                                    .flex_row_dir(cx)
+                                    .items_center()
+                                    .gap_2()
+                                    .child(icon("zap").text_color(p.accent))
+                                    .child(section_title(t("Shorts"), cx)),
+                            )
+                            .child(
+                                div().flex_row_dir(cx).gap_4().overflow_hidden().children(
+                                    indices
+                                        .iter()
+                                        .filter_map(|&index| items[index].as_video())
+                                        .map(|video| shorts_card(video, px(190.), cx)),
+                                ),
+                            )
                             .into_any_element(),
-                        SearchRow::Empty => empty_state("search-x", "No results found", t("Try different keywords or remove filters"), cx).into_any_element(),
+                        SearchRow::Empty => empty_state(
+                            "search-x",
+                            "No results found",
+                            t("Try different keywords or remove filters"),
+                            cx,
+                        )
+                        .into_any_element(),
                         SearchRow::More if loading_more => spinner(cx).into_any_element(),
                         SearchRow::More => {
                             let page = page.clone();
                             let label = if more_failed { "Retry" } else { "Show more" };
-                            div().flex().justify_center().py_4().child(
-                                pill("search-more", None, label, cx)
-                                    .tab_index(0)
-                                    .focus(move |style| style.bg(p.hover))
-                                    .on_click(move |_, _, cx| {
-                                        let _ = page.update(cx, Self::load_more);
-                                    }),
-                            ).into_any_element()
+                            div()
+                                .flex()
+                                .justify_center()
+                                .py_4()
+                                .child(
+                                    pill("search-more", None, label, cx)
+                                        .tab_index(0)
+                                        .focus(move |style| style.bg(p.hover))
+                                        .on_click(move |_, _, cx| {
+                                            let _ = page.update(cx, Self::load_more);
+                                        }),
+                                )
+                                .into_any_element()
                         }
                     };
-                    div().flex().justify_center().child(div().w(width).pb_4().child(element)).into_any_element()
+                    div()
+                        .flex()
+                        .justify_center()
+                        .child(div().w(width).pb_4().child(element))
+                        .into_any_element()
                 })
                 .absolute()
                 .inset_0()
@@ -379,7 +521,13 @@ impl Render for SearchPage {
             }
         };
         div().size_full().flex().flex_col().child(controls).child(
-            div().relative().flex_1().min_h_0().child(scroll_viewport("search-scroll", &self.scroll, body, window, cx)),
+            div().relative().flex_1().min_h_0().child(scroll_viewport(
+                "search-scroll",
+                &self.scroll,
+                body,
+                window,
+                cx,
+            )),
         )
     }
 }
@@ -391,10 +539,18 @@ mod tests {
 
     #[test]
     fn keeps_search_rank_when_pages_repeat_results() {
-        let video = |id: &str| Item::Video(VideoItem { id: id.into(), ..Default::default() });
+        let video = |id: &str| {
+            Item::Video(VideoItem {
+                id: id.into(),
+                ..Default::default()
+            })
+        };
         let mut results = vec![video("first")];
 
-        append_results(&mut results, vec![video("first"), video("new"), video("new"), video("last")]);
+        append_results(
+            &mut results,
+            vec![video("first"), video("new"), video("new"), video("last")],
+        );
 
         assert_eq!(results, [video("first"), video("new"), video("last")]);
     }

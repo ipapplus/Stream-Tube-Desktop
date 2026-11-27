@@ -113,18 +113,20 @@ impl TrackMenu {
 impl Render for TrackMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
+        let direction = LayoutDirection::global(cx);
         let mut panel = div().w(px(300.)).text_sm().text_color(p.text).child(
             div()
                 .id("caption-back")
-                .flex()
+                .flex_row_dir(cx)
                 .items_center()
                 .gap_2()
-                .px_3()
+                .ps(px(12.), cx)
+                .pe(px(12.), cx)
                 .h_8()
                 .cursor_pointer()
                 .hover(move |s| s.bg(p.hover))
-                .child(icon("arrow-left").size_4().text_color(p.text))
-                .child(t("Back"))
+                .child(icon(back_nav_icon(direction)).size_4().text_color(p.text))
+                .child(div().text_start(cx).child(t("Back")))
                 .on_click(cx.listener(|this, _, window, cx| {
                     open_menu(
                         this.anchor,

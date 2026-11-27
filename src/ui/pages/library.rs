@@ -33,10 +33,15 @@ pub struct HistoryPage {
 
 impl HistoryPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(translate("Search history")));
+        let filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder(translate("Search history")));
         cx.observe(&filter, |_, _, cx| cx.notify()).detach();
         let account = Account::current();
-        let tab = if account.is_some() { HistTab::Account } else { HistTab::Device };
+        let tab = if account.is_some() {
+            HistTab::Account
+        } else {
+            HistTab::Device
+        };
         let mut s = Self {
             filter,
             scroll: ScrollHandle::new(),
@@ -53,7 +58,8 @@ impl HistoryPage {
         };
         refresh_current(cx, true);
         s.update_snapshot(cx);
-        cx.observe_global::<AccountHistory>(|this, cx| this.update_snapshot(cx)).detach();
+        cx.observe_global::<AccountHistory>(|this, cx| this.update_snapshot(cx))
+            .detach();
         s
     }
 
@@ -73,23 +79,32 @@ impl HistoryPage {
                 self.tab = HistTab::Device;
             }
         }
-        if let Some(snapshot) = cx.try_global::<AccountHistory>()
+        if let Some(snapshot) = cx
+            .try_global::<AccountHistory>()
             .filter(|state| state.account_key == key)
             .and_then(|state| state.snapshot.clone())
         {
-            if self.snapshot.as_ref().is_some_and(|old| std::sync::Arc::ptr_eq(old, &snapshot)) {
+            if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|old| std::sync::Arc::ptr_eq(old, &snapshot))
+            {
                 return;
             }
             match snapshot.as_ref() {
                 Ok(page) => {
                     let mut entries = page.entries.clone();
-                    let head = entries.iter().map(|entry| entry.video.id.clone()).collect::<HashSet<_>>();
+                    let head = entries
+                        .iter()
+                        .map(|entry| entry.video.id.clone())
+                        .collect::<HashSet<_>>();
                     // A refresh of the newest page should not discard older
                     // pages or interrupt an in-flight continuation.
                     if self.yt_loaded_more || self.yt_loading_more {
                         if let Some(Load::Ready(existing)) = &mut self.yt {
                             entries.extend(existing.drain(..).filter(|entry| {
-                                !self.yt_head.contains(&entry.video.id) && !head.contains(&entry.video.id)
+                                !self.yt_head.contains(&entry.video.id)
+                                    && !head.contains(&entry.video.id)
                             }));
                         }
                     } else {
@@ -99,7 +114,9 @@ impl HistoryPage {
                     self.yt_head = head;
                     self.yt = Some(Load::Ready(entries));
                 }
-                Err(error) if !matches!(self.yt, Some(Load::Ready(_))) => self.yt = Some(Load::Error(error.clone())),
+                Err(error) if !matches!(self.yt, Some(Load::Ready(_))) => {
+                    self.yt = Some(Load::Error(error.clone()))
+                }
                 Err(_) => {}
             }
             self.snapshot = Some(snapshot);
@@ -130,8 +147,13 @@ impl HistoryPage {
                     t.yt_cont = page.continuation;
                     t.yt_loaded_more = true;
                     if let Some(Load::Ready(list)) = &mut t.yt {
-                        let seen: HashSet<String> = list.iter().map(|entry| entry.video.id.clone()).collect();
-                        list.extend(page.entries.into_iter().filter(|entry| !seen.contains(&entry.video.id)));
+                        let seen: HashSet<String> =
+                            list.iter().map(|entry| entry.video.id.clone()).collect();
+                        list.extend(
+                            page.entries
+                                .into_iter()
+                                .filter(|entry| !seen.contains(&entry.video.id)),
+                        );
                     }
                 }
                 cx.notify();
@@ -144,22 +166,48 @@ impl HistoryPage {
         let mut list = div().flex().flex_col().gap_4().flex_1().min_w_0();
         let has_more = self.yt_cont.is_some();
         let shown: Vec<&Entry> = match &self.yt {
-            None => return list.child(empty_state("history", "Sign in to see your YouTube watch history", "", cx)),
+            None => {
+                return list.child(empty_state(
+                    "history",
+                    "Sign in to see your YouTube watch history",
+                    "",
+                    cx,
+                ));
+            }
             Some(Load::Loading) => return list.child(loading_row(cx)),
             Some(Load::Error(e)) => {
                 let e = e.clone();
-                return list.child(empty_state("cloud-off", "Could not load your YouTube history", &e, cx));
+                return list.child(empty_state(
+                    "cloud-off",
+                    "Could not load your YouTube history",
+                    &e,
+                    cx,
+                ));
             }
             Some(Load::Ready(videos)) => {
                 let ql = q.to_lowercase();
-                videos.iter().filter(|entry| {
-                    let v = &entry.video;
-                    ql.is_empty() || v.title.to_lowercase().contains(&ql) || v.channel_name.to_lowercase().contains(&ql)
-                }).collect()
+                videos
+                    .iter()
+                    .filter(|entry| {
+                        let v = &entry.video;
+                        ql.is_empty()
+                            || v.title.to_lowercase().contains(&ql)
+                            || v.channel_name.to_lowercase().contains(&ql)
+                    })
+                    .collect()
             }
         };
         if shown.is_empty() {
-            list = list.child(empty_state("history", if q.is_empty() { "Your YouTube watch history is empty" } else { "No matches" }, "", cx));
+            list = list.child(empty_state(
+                "history",
+                if q.is_empty() {
+                    "Your YouTube watch history is empty"
+                } else {
+                    "No matches"
+                },
+                "",
+                cx,
+            ));
         }
         for entry in shown {
             let v = &entry.video;
@@ -171,10 +219,13 @@ impl HistoryPage {
                     .gap_2()
                     .child(div().flex_1().min_w_0().child(video_row(v, px(246.), cx)))
                     .when(entry.removal_token.is_some(), |d| {
-                        d.child(icon_button(SharedString::from(format!("yhx-{}", v.id)), "x", cx).on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.remove_account_entry(id.clone(), cx);
-                        })))
+                        d.child(
+                            icon_button(SharedString::from(format!("yhx-{}", v.id)), "x", cx)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.remove_account_entry(id.clone(), cx);
+                                })),
+                        )
                     }),
             );
         }
@@ -186,10 +237,18 @@ impl HistoryPage {
 
     /// Removes an entry in the same account that supplied its feedback token.
     fn remove_account_entry(&mut self, id: String, cx: &mut Context<Self>) {
-        let Some(account) = self.account.clone() else { return };
-        let Some(Load::Ready(list)) = &mut self.yt else { return };
-        let Some(pos) = list.iter().position(|entry| entry.video.id == id) else { return };
-        let Some(token) = list[pos].removal_token.clone() else { return };
+        let Some(account) = self.account.clone() else {
+            return;
+        };
+        let Some(Load::Ready(list)) = &mut self.yt else {
+            return;
+        };
+        let Some(pos) = list.iter().position(|entry| entry.video.id == id) else {
+            return;
+        };
+        let Some(token) = list[pos].removal_token.clone() else {
+            return;
+        };
         let removed = list.remove(pos);
         let key = account.key();
         let revision = self.yt_revision;
@@ -219,7 +278,13 @@ impl HistoryPage {
                             list.insert(pos.min(list.len()), removed);
                         }
                     }
-                    toast(cx, tf!("Couldn't remove it from YouTube: {0}", crate::ui::friendly_error(&e.to_string())));
+                    toast(
+                        cx,
+                        tf!(
+                            "Couldn't remove it from YouTube: {0}",
+                            crate::ui::friendly_error(&e.to_string())
+                        ),
+                    );
                     cx.notify();
                 }
             });
@@ -231,9 +296,21 @@ impl HistoryPage {
         let p = pal(cx);
         let mut list = div().flex().flex_col().gap_1().flex_1().min_w_0();
         let ql = q.to_lowercase();
-        let items: Vec<String> = store::search_history("", 500).into_iter().filter(|s| ql.is_empty() || s.to_lowercase().contains(&ql)).collect();
+        let items: Vec<String> = store::search_history("", 500)
+            .into_iter()
+            .filter(|s| ql.is_empty() || s.to_lowercase().contains(&ql))
+            .collect();
         if items.is_empty() {
-            return list.child(empty_state("search", if q.is_empty() { "No searches yet" } else { "No matches" }, translate("Searches made in this app show here"), cx));
+            return list.child(empty_state(
+                "search",
+                if q.is_empty() {
+                    "No searches yet"
+                } else {
+                    "No matches"
+                },
+                translate("Searches made in this app show here"),
+                cx,
+            ));
         }
         for (i, item) in items.into_iter().enumerate() {
             let (a, b) = (item.clone(), item.clone());
@@ -250,12 +327,23 @@ impl HistoryPage {
                     .hover(|d| d.bg(p.hover))
                     .on_click(move |_, window, cx| navigate(Route::Search(a.clone()), window, cx))
                     .child(icon("history").size_4().text_color(p.text2))
-                    .child(div().flex_1().min_w_0().truncate().text_color(p.text).child(item))
-                    .child(icon_button(SharedString::from(format!("shx-{i}")), "x", cx).on_click(cx.listener(move |_, _, _, cx| {
-                        cx.stop_propagation();
-                        store::search_history_remove(&b);
-                        cx.notify();
-                    }))),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(p.text)
+                            .child(item),
+                    )
+                    .child(
+                        icon_button(SharedString::from(format!("shx-{i}")), "x", cx).on_click(
+                            cx.listener(move |_, _, _, cx| {
+                                cx.stop_propagation();
+                                store::search_history_remove(&b);
+                                cx.notify();
+                            }),
+                        ),
+                    ),
             );
         }
         list
@@ -264,7 +352,12 @@ impl HistoryPage {
 
 fn loading_row(cx: &App) -> Div {
     let p = pal(cx);
-    div().py_6().flex().justify_center().text_color(p.text2).child(translate("Loading…"))
+    div()
+        .py_6()
+        .flex()
+        .justify_center()
+        .text_color(p.text2)
+        .child(translate("Loading…"))
 }
 
 impl Render for HistoryPage {
@@ -285,30 +378,60 @@ impl Render for HistoryPage {
         }
         let width = content_width(cx).min(px(1100.));
         let signed_in = self.account.is_some();
-        let mut tabs = div().flex().gap_2();
+        let mut tabs = div().flex_row_dir(cx).gap_2();
         let tab_defs: Vec<(HistTab, &str)> = if signed_in {
-            vec![(HistTab::Account, "YouTube history"), (HistTab::Device, "On this device"), (HistTab::Searches, "Searches")]
+            vec![
+                (HistTab::Account, "YouTube history"),
+                (HistTab::Device, "On this device"),
+                (HistTab::Searches, "Searches"),
+            ]
         } else {
-            vec![(HistTab::Device, "Watched"), (HistTab::Searches, "Searches")]
+            vec![
+                (HistTab::Device, "Watched"),
+                (HistTab::Searches, "Searches"),
+            ]
         };
         for (t, label) in tab_defs {
-            tabs = tabs.child(chip(SharedString::from(format!("ht-{label}")), translate(label), self.tab == t, cx).on_click(cx.listener(move |this, _, _, cx| {
-                this.tab = t;
-                if t == HistTab::Account {
-                    refresh_current(cx, true);
-                }
-                cx.notify();
-            })));
+            tabs = tabs.child(
+                chip(
+                    SharedString::from(format!("ht-{label}")),
+                    translate(label),
+                    self.tab == t,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.tab = t;
+                    if t == HistTab::Account {
+                        refresh_current(cx, true);
+                    }
+                    cx.notify();
+                })),
+            );
         }
-        let entries = if self.tab == HistTab::Device { store::history_list(&q, self.limit) } else { Vec::new() };
+        let entries = if self.tab == HistTab::Device {
+            store::history_list(&q, self.limit)
+        } else {
+            Vec::new()
+        };
         let mut list = div().flex().flex_col().gap_4().flex_1().min_w_0();
         let mut cur_day = String::new();
         for h in &entries {
             let day = chrono::DateTime::from_timestamp(h.watched_at, 0)
-                .map(|d| d.with_timezone(&chrono::Local).format("%A, %B %-d, %Y").to_string())
+                .map(|d| {
+                    d.with_timezone(&chrono::Local)
+                        .format("%A, %B %-d, %Y")
+                        .to_string()
+                })
                 .unwrap_or_default();
             if day != cur_day {
-                list = list.child(div().pt_4().text_lg().font_weight(FontWeight::BOLD).text_color(p.text).child(day.clone()));
+                list = list.child(
+                    div()
+                        .pt_4()
+                        .text_lg()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(p.text)
+                        .child(day.clone()),
+                );
                 cur_day = day;
             }
             let id = h.video.id.clone();
@@ -317,13 +440,21 @@ impl Render for HistoryPage {
                     .flex()
                     .items_start()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(video_row(&h.video, px(246.), cx)))
-                    .child(icon_button(SharedString::from(format!("hx-{}", h.video.id)), "x", cx).on_click(cx.listener(move |_, _, _, cx| {
-                        cx.stop_propagation();
-                        store::history_remove(&id);
-                        cx.default_global::<Watched>().0.remove(&id);
-                        crate::ui::app::refresh_all_pages(cx);
-                    }))),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(video_row(&h.video, px(246.), cx)),
+                    )
+                    .child(
+                        icon_button(SharedString::from(format!("hx-{}", h.video.id)), "x", cx)
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.stop_propagation();
+                                store::history_remove(&id);
+                                cx.default_global::<Watched>().0.remove(&id);
+                                crate::ui::app::refresh_all_pages(cx);
+                            })),
+                    ),
             );
         }
         if self.tab == HistTab::Account {
@@ -331,7 +462,16 @@ impl Render for HistoryPage {
         } else if self.tab == HistTab::Searches {
             list = self.search_list(&q, cx);
         } else if entries.is_empty() {
-            list = list.child(empty_state("history", if q.is_empty() { "Your watch history is empty" } else { "No matches" }, "", cx));
+            list = list.child(empty_state(
+                "history",
+                if q.is_empty() {
+                    "Your watch history is empty"
+                } else {
+                    "No matches"
+                },
+                "",
+                cx,
+            ));
         }
         let side = div()
             .flex()
@@ -339,7 +479,7 @@ impl Render for HistoryPage {
             .gap_4()
             .w(px(320.))
             .flex_none()
-            .child(div().flex().items_center().gap_2().border_b_1().border_color(p.border).pb_1().child(icon("search").size_4().text_color(p.text2)).child(Input::new(&self.filter).appearance(false).cleanable(true)))
+            .child(div().flex_row_dir(cx).items_center().gap_2().border_b_1().border_color(p.border).pb_1().child(icon("search").size_4().text_color(p.text2)).child(Input::new(&self.filter).appearance(false).cleanable(true)))
             .child(
                 pill("h-clear", Some("trash-2"), "Clear all watch history", cx).on_click(|_, window, cx| {
                     confirm("Clear watch history?", "All watch history on this device and resume positions will be deleted.", "Clear", window, cx, |_, cx| {
@@ -371,7 +511,7 @@ impl Render for HistoryPage {
                     .gap_4()
                     .child(section_title(translate("History"), cx).text_3xl())
                     .child(tabs)
-                    .child(div().flex().gap_8().child(list).child(side)),
+                    .child(div().flex_row_dir(cx).gap_8().child(list).child(side)),
             ),
         )
     }
@@ -385,7 +525,10 @@ pub struct LibraryPage {
 
 impl LibraryPage {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut s = Self { scroll: ScrollHandle::new(), yt: None };
+        let mut s = Self {
+            scroll: ScrollHandle::new(),
+            yt: None,
+        };
         if crate::api::auth::signed_in() {
             s.yt = Some(Load::Loading);
             cx.spawn(async move |this, cx| {
@@ -422,16 +565,47 @@ impl Render for LibraryPage {
                     .w(w)
                     .cursor_pointer()
                     .on_click(move |_, window, cx| navigate(Route::LocalPlaylist(id), window, cx))
-                    .child(playlist_thumb(pl.thumbnail.clone(), Some(tf!("{0} videos", pl.count)), w, w * (9. / 16.), cx))
+                    .child(playlist_thumb(
+                        pl.thumbnail.clone(),
+                        Some(tf!("{0} videos", pl.count)),
+                        w,
+                        w * (9. / 16.),
+                        cx,
+                    ))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .when(pl.protected, |d| d.child(icon(if pl.name == "Watch later" { "clock" } else { "heart" }).size_4().text_color(p.text2)))
-                            .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(if pl.protected { translate(&pl.name).to_string() } else { pl.name.clone() })),
+                            .when(pl.protected, |d| {
+                                d.child(
+                                    icon(if pl.name == "Watch later" {
+                                        "clock"
+                                    } else {
+                                        "heart"
+                                    })
+                                    .size_4()
+                                    .text_color(p.text2),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(p.text)
+                                    .child(if pl.protected {
+                                        translate(&pl.name).to_string()
+                                    } else {
+                                        pl.name.clone()
+                                    }),
+                            ),
                     )
-                    .child(div().text_xs().text_color(p.text2).child(translate("Local, private")))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(p.text2)
+                            .child(translate("Local, private")),
+                    )
                     .into_any_element()
             })
             .collect();
@@ -452,17 +626,31 @@ impl Render for LibraryPage {
                 .cursor_pointer()
                 .hover(move |s| s.bg(p.surface))
                 .child(icon("plus").size_8().text_color(p.text2))
-                .child(div().text_sm().text_color(p.text2).child(translate("New playlist")))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(p.text2)
+                        .child(translate("New playlist")),
+                )
                 .on_click(|_, window, cx| {
-                    prompt_text("New playlist", "Playlist name", window, cx, |name, _, cx| {
-                        store::playlist_create(&name);
-                        cx.refresh_windows();
-                    });
+                    prompt_text(
+                        "New playlist",
+                        "Playlist name",
+                        window,
+                        cx,
+                        |name, _, cx| {
+                            store::playlist_create(&name);
+                            cx.refresh_windows();
+                        },
+                    );
                 })
                 .into_any_element(),
         );
         let saved = store::saved_playlists();
-        let history: Vec<_> = store::history_list("", 12).into_iter().map(|h| h.video).collect();
+        let history: Vec<_> = store::history_list("", 12)
+            .into_iter()
+            .map(|h| h.video)
+            .collect();
         let (_, hw) = grid_columns(width, 220.0, window.rem_size());
         page_scroll("lib-scroll", &self.scroll).child(
             div()
@@ -484,20 +672,52 @@ impl Render for LibraryPage {
                                     .items_center()
                                     .justify_between()
                                     .child(section_title(translate("History"), cx))
-                                    .child(pill("lib-hist", None, "View all", cx).on_click(|_, window, cx| navigate(Route::History, window, cx))),
+                                    .child(pill("lib-hist", None, "View all", cx).on_click(
+                                        |_, window, cx| navigate(Route::History, window, cx),
+                                    )),
                             )
-                            .child(div().flex().gap_4().overflow_hidden().children(history.iter().take(6).map(|v| video_card(v, hw, true, cx)))),
+                            .child(div().flex_row_dir(cx).gap_4().overflow_hidden().children(
+                                history.iter().take(6).map(|v| video_card(v, hw, true, cx)),
+                            )),
                     )
                 })
-                .when_some(self.yt.as_ref().map(|l| match l {
-                    Load::Loading => spinner(cx).into_any_element(),
-                    Load::Error(e) => div().text_sm().text_color(p.text2).child(tf!("Could not load your YouTube playlists: {0}", e)).into_any_element(),
-                    Load::Ready(l) if l.is_empty() => div().text_sm().text_color(p.text2).child(translate("No playlists on your account yet")).into_any_element(),
-                    Load::Ready(l) => grid(l.iter().map(|pl| playlist_card(pl, w, cx)).collect(), width).into_any_element(),
-                }), |d, body| {
-                    d.child(div().flex().flex_col().gap_4().child(section_title(translate("Your YouTube playlists"), cx)).child(body))
-                })
-                .child(div().flex().flex_col().gap_4().child(section_title(translate("On this computer"), cx)).child(grid(cards, width)))
+                .when_some(
+                    self.yt.as_ref().map(|l| match l {
+                        Load::Loading => spinner(cx).into_any_element(),
+                        Load::Error(e) => div()
+                            .text_sm()
+                            .text_color(p.text2)
+                            .child(tf!("Could not load your YouTube playlists: {0}", e))
+                            .into_any_element(),
+                        Load::Ready(l) if l.is_empty() => div()
+                            .text_sm()
+                            .text_color(p.text2)
+                            .child(translate("No playlists on your account yet"))
+                            .into_any_element(),
+                        Load::Ready(l) => {
+                            grid(l.iter().map(|pl| playlist_card(pl, w, cx)).collect(), cx)
+                                .into_any_element()
+                        }
+                    }),
+                    |d, body| {
+                        d.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_4()
+                                .child(section_title(translate("Your YouTube playlists"), cx))
+                                .child(body),
+                        )
+                    },
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_4()
+                        .child(section_title(translate("On this computer"), cx))
+                        .child(grid(cards, cx)),
+                )
                 .when(!saved.is_empty(), |d| {
                     d.child(
                         div()
@@ -505,7 +725,10 @@ impl Render for LibraryPage {
                             .flex_col()
                             .gap_4()
                             .child(section_title(translate("Saved playlists"), cx))
-                            .child(grid(saved.iter().map(|pl| playlist_card(pl, w, cx)).collect(), width)),
+                            .child(grid(
+                                saved.iter().map(|pl| playlist_card(pl, w, cx)).collect(),
+                                cx,
+                            )),
                     )
                 }),
         )

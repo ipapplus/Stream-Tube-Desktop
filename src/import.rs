@@ -29,13 +29,18 @@ impl std::fmt::Display for ImportReport {
 
 fn channel_id_from_url(u: &str) -> Option<String> {
     let i = u.find("/channel/")? + 9;
-    let id: String = u[i..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+    let id: String = u[i..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
     (id.len() == 24).then_some(id)
 }
 
 pub fn import_file(path: &Path) -> Result<ImportReport> {
     let raw = std::fs::read(path)?;
-    let text = String::from_utf8_lossy(&raw).trim_start_matches('\u{feff}').to_string();
+    let text = String::from_utf8_lossy(&raw)
+        .trim_start_matches('\u{feff}')
+        .to_string();
     let mut rep = ImportReport::default();
     let trimmed = text.trim_start();
 
@@ -48,8 +53,14 @@ pub fn import_file(path: &Path) -> Result<ImportReport> {
                 Some(part[p..p + q].replace("&amp;", "&"))
             };
             if let Some(url) = get("xmlUrl") {
-                if let Some(id) = url.split("channel_id=").nth(1).map(|s| s.chars().take(24).collect::<String>()) {
-                    let name = get("title").or_else(|| get("text")).unwrap_or_else(|| id.clone());
+                if let Some(id) = url
+                    .split("channel_id=")
+                    .nth(1)
+                    .map(|s| s.chars().take(24).collect::<String>())
+                {
+                    let name = get("title")
+                        .or_else(|| get("text"))
+                        .unwrap_or_else(|| id.clone());
                     store::subscribe(&id, &name, None);
                     rep.subscriptions += 1;
                 }
@@ -85,11 +96,19 @@ pub fn import_file(path: &Path) -> Result<ImportReport> {
             if cols.is_empty() {
                 continue;
             }
-            let id = cols
-                .iter()
-                .find_map(|c| if c.starts_with("UC") && c.len() == 24 { Some(c.clone()) } else { channel_id_from_url(c) });
+            let id = cols.iter().find_map(|c| {
+                if c.starts_with("UC") && c.len() == 24 {
+                    Some(c.clone())
+                } else {
+                    channel_id_from_url(c)
+                }
+            });
             if let Some(id) = id {
-                let name = cols.get(2).cloned().filter(|n| !n.is_empty()).unwrap_or_else(|| id.clone());
+                let name = cols
+                    .get(2)
+                    .cloned()
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| id.clone());
                 store::subscribe(&id, &name, None);
                 rep.subscriptions += 1;
             }
@@ -131,7 +150,11 @@ fn import_json_value(v: &Value, rep: &mut ImportReport) -> Result<()> {
         for h in v["history"].as_array().into_iter().flatten() {
             if let Ok(vi) = serde_json::from_value::<VideoItem>(h["video"].clone()) {
                 store::history_add(&vi);
-                store::history_progress(&vi.id, h["progress"].as_f64().unwrap_or(0.0), h["duration"].as_f64().unwrap_or(0.0));
+                store::history_progress(
+                    &vi.id,
+                    h["progress"].as_f64().unwrap_or(0.0),
+                    h["duration"].as_f64().unwrap_or(0.0),
+                );
                 rep.history += 1;
             }
         }
@@ -147,8 +170,16 @@ fn import_json_value(v: &Value, rep: &mut ImportReport) -> Result<()> {
             }
         }
         for p in v["profiles"].as_array().into_iter().flatten() {
-            let pid = store::create_profile(p["name"].as_str().unwrap_or("Profile"), p["color"].as_u64().unwrap_or(0x3ea6ff) as u32);
-            for c in p["channels"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            let pid = store::create_profile(
+                p["name"].as_str().unwrap_or("Profile"),
+                p["color"].as_u64().unwrap_or(0x3ea6ff) as u32,
+            );
+            for c in p["channels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
                 store::set_profile_channel(pid, c, true);
             }
         }
@@ -174,12 +205,29 @@ fn import_json_value(v: &Value, rep: &mut ImportReport) -> Result<()> {
     // YouTube Takeout watch-history.json
     if let Some(arr) = v.as_array() {
         for e in arr {
-            let Some(url) = e["titleUrl"].as_str() else { continue };
-            let Some(id) = url.split("v=").nth(1).map(|s| s.chars().take(11).collect::<String>()) else { continue };
-            let title = e["title"].as_str().unwrap_or("").trim_start_matches("Watched ").to_string();
+            let Some(url) = e["titleUrl"].as_str() else {
+                continue;
+            };
+            let Some(id) = url
+                .split("v=")
+                .nth(1)
+                .map(|s| s.chars().take(11).collect::<String>())
+            else {
+                continue;
+            };
+            let title = e["title"]
+                .as_str()
+                .unwrap_or("")
+                .trim_start_matches("Watched ")
+                .to_string();
             let (channel_name, channel_id) = e["subtitles"]
                 .get(0)
-                .map(|s| (s["name"].as_str().unwrap_or("").to_string(), s["url"].as_str().and_then(channel_id_from_url)))
+                .map(|s| {
+                    (
+                        s["name"].as_str().unwrap_or("").to_string(),
+                        s["url"].as_str().and_then(channel_id_from_url),
+                    )
+                })
                 .unwrap_or_default();
             let vi = VideoItem {
                 thumbnail: format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg"),
@@ -219,7 +267,9 @@ fn freetube_video(v: &Value) -> Option<VideoItem> {
         title: v["title"].as_str().unwrap_or("").to_string(),
         channel_name: v["author"].as_str().unwrap_or("").to_string(),
         channel_id: v["authorId"].as_str().map(str::to_string),
-        duration_secs: v["lengthSeconds"].as_u64().or_else(|| v["lengthSeconds"].as_str().and_then(|s| s.parse().ok())),
+        duration_secs: v["lengthSeconds"]
+            .as_u64()
+            .or_else(|| v["lengthSeconds"].as_str().and_then(|s| s.parse().ok())),
         duration_text: v["lengthSeconds"]
             .as_u64()
             .or_else(|| v["lengthSeconds"].as_str().and_then(|s| s.parse().ok()))
@@ -240,7 +290,11 @@ fn import_freetube_line(v: &Value, rep: &mut ImportReport) {
         };
         for s in subs {
             if let Some(id) = s["id"].as_str() {
-                store::subscribe(id, s["name"].as_str().unwrap_or(id), s["thumbnail"].as_str());
+                store::subscribe(
+                    id,
+                    s["name"].as_str().unwrap_or(id),
+                    s["thumbnail"].as_str(),
+                );
                 if let Some(pid) = pid {
                     store::set_profile_channel(pid, id, true);
                 } else {
@@ -253,7 +307,11 @@ fn import_freetube_line(v: &Value, rep: &mut ImportReport) {
     // playlist
     if let Some(videos) = v["videos"].as_array() {
         let name = v["playlistName"].as_str().unwrap_or("Imported playlist");
-        let name = if name == "Favorites" { "Favorites" } else { name };
+        let name = if name == "Favorites" {
+            "Favorites"
+        } else {
+            name
+        };
         let id = existing_or_new_playlist(name);
         rep.playlists += 1;
         for item in videos {
@@ -267,7 +325,9 @@ fn import_freetube_line(v: &Value, rep: &mut ImportReport) {
     // history entry
     if v.get("timeWatched").is_some() {
         if let Some(mut vi) = freetube_video(v) {
-            vi.views_text = v["viewCount"].as_u64().map(|c| format!("{} views", crate::api::json::compact_number(c)));
+            vi.views_text = v["viewCount"]
+                .as_u64()
+                .map(|c| format!("{} views", crate::api::json::compact_number(c)));
             store::history_add(&vi);
             let progress = v["watchProgress"].as_f64().unwrap_or(0.0);
             store::history_progress(&vi.id, progress, vi.duration_secs.unwrap_or(0) as f64);
@@ -304,7 +364,11 @@ pub fn export_backup(path: &Path) -> Result<()> {
 
 pub fn export_subscriptions(path: &Path) -> Result<()> {
     let subs = store::subscriptions();
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     let content = match ext.as_str() {
         "csv" => {
             let mut s = String::from("Channel Id,Channel Url,Channel Title\n");
@@ -319,9 +383,15 @@ pub fn export_subscriptions(path: &Path) -> Result<()> {
             s
         }
         "opml" | "xml" => {
-            let mut s = String::from("<opml version=\"1.1\"><body><outline text=\"YouTube Subscriptions\" title=\"YouTube Subscriptions\">\n");
+            let mut s = String::from(
+                "<opml version=\"1.1\"><body><outline text=\"YouTube Subscriptions\" title=\"YouTube Subscriptions\">\n",
+            );
             for c in &subs {
-                let n = c.name.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+                let n = c
+                    .name
+                    .replace('&', "&amp;")
+                    .replace('"', "&quot;")
+                    .replace('<', "&lt;");
                 s.push_str(&format!(
                     "<outline text=\"{n}\" title=\"{n}\" type=\"rss\" xmlUrl=\"https://www.youtube.com/feeds/videos.xml?channel_id={}\"/>\n",
                     c.channel_id
@@ -350,6 +420,9 @@ mod tests {
     #[test]
     fn csv_split() {
         assert_eq!(split_csv("a,\"b, c\",d"), vec!["a", "b, c", "d"]);
-        assert_eq!(channel_id_from_url("http://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA"), Some("UCsBjURrPoezykLs9EqgamOA".into()));
+        assert_eq!(
+            channel_id_from_url("http://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA"),
+            Some("UCsBjURrPoezykLs9EqgamOA".into())
+        );
     }
 }

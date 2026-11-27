@@ -87,7 +87,13 @@ pub const AD_RENDERERS: &[&str] = &[
 
 /// Fields that only appear on ads, also when YouTube draws an ad with a regular
 /// video renderer or lockup.
-const AD_MARKERS: &[&str] = &["adSlotLoggingData", "adLayoutLoggingData", "adClientParams", "adVideoId", "promotedVideoRenderer"];
+const AD_MARKERS: &[&str] = &[
+    "adSlotLoggingData",
+    "adLayoutLoggingData",
+    "adClientParams",
+    "adVideoId",
+    "promotedVideoRenderer",
+];
 
 /// Whether a renderer is an ad: it carries an ad-only field or an "Ad"/"Sponsored" badge.
 pub fn is_ad(v: &Value) -> bool {
@@ -95,7 +101,11 @@ pub fn is_ad(v: &Value) -> bool {
         Value::Object(m) => m.iter().any(|(k, c)| {
             AD_MARKERS.contains(&k.as_str())
                 || AD_RENDERERS.contains(&k.as_str())
-                || ((k == "style" || k == "badgeStyle") && matches!(c.as_str(), Some("BADGE_STYLE_TYPE_AD" | "BADGE_STYLE_TYPE_AD_INFO")))
+                || ((k == "style" || k == "badgeStyle")
+                    && matches!(
+                        c.as_str(),
+                        Some("BADGE_STYLE_TYPE_AD" | "BADGE_STYLE_TYPE_AD_INFO")
+                    ))
                 || (k == "iconType" && c.as_str() == Some("AD_BADGE"))
                 || is_ad(c)
         }),
@@ -119,22 +129,37 @@ pub fn best_thumb(v: &Value) -> Option<String> {
         .filter(|t| w(t) >= 600 || h(t) >= 700)
         .min_by_key(|t| w(t) * h(t).max(1))
         .or_else(|| arr.iter().max_by_key(w))?;
-    best.get("url").and_then(Value::as_str).map(fix_url).map(|u| limit_avatar(&u))
+    best.get("url")
+        .and_then(Value::as_str)
+        .map(fix_url)
+        .map(|u| limit_avatar(&u))
 }
 
 #[cfg(test)]
 mod avatar_tests {
     #[test]
     fn avatar_size() {
-        assert_eq!(super::limit_avatar("https://yt3.ggpht.com/abc=s900-c-k-c0x00ffffff-no-rj"), "https://yt3.ggpht.com/abc=s240-c-k-c0x00ffffff-no-rj");
-        assert_eq!(super::limit_avatar("https://yt3.ggpht.com/abc=s88-c-k"), "https://yt3.ggpht.com/abc=s88-c-k");
-        assert_eq!(super::limit_avatar("https://i.ytimg.com/vi/x/hq720.jpg"), "https://i.ytimg.com/vi/x/hq720.jpg");
+        assert_eq!(
+            super::limit_avatar("https://yt3.ggpht.com/abc=s900-c-k-c0x00ffffff-no-rj"),
+            "https://yt3.ggpht.com/abc=s240-c-k-c0x00ffffff-no-rj"
+        );
+        assert_eq!(
+            super::limit_avatar("https://yt3.ggpht.com/abc=s88-c-k"),
+            "https://yt3.ggpht.com/abc=s88-c-k"
+        );
+        assert_eq!(
+            super::limit_avatar("https://i.ytimg.com/vi/x/hq720.jpg"),
+            "https://i.ytimg.com/vi/x/hq720.jpg"
+        );
     }
 }
 
 /// A thumbnail sized for a 168 pt recommendation card on a Retina display.
 pub fn compact_thumb(v: &Value) -> Option<String> {
-    let images = v.get("thumbnails").or_else(|| v.get("sources"))?.as_array()?;
+    let images = v
+        .get("thumbnails")
+        .or_else(|| v.get("sources"))?
+        .as_array()?;
     images
         .iter()
         .filter_map(|image| Some((image.get("width")?.as_u64()?, image.get("url")?.as_str()?)))
@@ -163,7 +188,12 @@ pub fn limit_avatar(u: &str) -> String {
     if let Some(i) = u.rfind("=s") {
         let rest = &u[i + 2..];
         let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-        if digits > 0 && rest[..digits].parse::<u32>().map(|n| n > 240).unwrap_or(false) {
+        if digits > 0
+            && rest[..digits]
+                .parse::<u32>()
+                .map(|n| n > 240)
+                .unwrap_or(false)
+        {
             return format!("{}=s240{}", &u[..i], &rest[digits..]);
         }
     }
@@ -196,7 +226,11 @@ pub fn format_duration(secs: u64) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;
-    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
 }
 
 /// Converts "3 days ago" / "3d ago" / "Streamed 2 weeks ago" into an approximate unix timestamp.
@@ -210,8 +244,21 @@ fn relative_secs(s: &str) -> Option<i64> {
     let lower = s.to_lowercase();
     // view and subscriber counts also start with a number ("3 M de vues")
     const COUNTS: [&str; 15] = [
-        "view", "vue", "aufruf", "visualiz", "vista", "weergave", "watching", "spectat", "zuschau", "subscri", "abonn", "visning", "просмотр",
-        "перегляд", "vizion",
+        "view",
+        "vue",
+        "aufruf",
+        "visualiz",
+        "vista",
+        "weergave",
+        "watching",
+        "spectat",
+        "zuschau",
+        "subscri",
+        "abonn",
+        "visning",
+        "просмотр",
+        "перегляд",
+        "vizion",
     ];
     if COUNTS.iter().any(|c| lower.contains(c)) {
         return None;
@@ -258,40 +305,203 @@ fn relative_secs(s: &str) -> Option<i64> {
     // hours, not Russian "год" years). The generic one-letter prefixes come last.
     const UNITS: &[(&[&str], i64)] = &[
         (&["minggu"], 7 * DAY),
-        (&["hari", "ngày", "gün", "päiv", "nap", "døgn", "zi", "ден", "дн", "dzie", "ημέρ", "يوم", "أيام", "दिन", "วัน", "日", "天", "일"], DAY),
         (
-            &["jam", "giờ", "saat", "tunt", "tim", "hod", "ór", "час", "годин", "ώρ", "ساع", "घंट", "ชั", "時間", "小时", "小時", "시간"],
+            &[
+                "hari",
+                "ngày",
+                "gün",
+                "päiv",
+                "nap",
+                "døgn",
+                "zi",
+                "ден",
+                "дн",
+                "dzie",
+                "ημέρ",
+                "يوم",
+                "أيام",
+                "दिन",
+                "วัน",
+                "日",
+                "天",
+                "일",
+            ],
+            DAY,
+        ),
+        (
+            &[
+                "jam",
+                "giờ",
+                "saat",
+                "tunt",
+                "tim",
+                "hod",
+                "ór",
+                "час",
+                "годин",
+                "ώρ",
+                "ساع",
+                "घंट",
+                "ชั",
+                "時間",
+                "小时",
+                "小時",
+                "시간",
+            ],
             HOUR,
         ),
         (
             &[
-                "mo", "mois", "mes", "mês", "monat", "maand", "mies", "mån", "kuuk", "bulan", "tháng", "hónap", "lun", "měs", "месяц", "мес", "міс",
-                "μήν", "شهر", "أشهر", "महीन", "माह", "เดือน", "か月", "ヶ月", "カ月", "个月", "個月", "개월",
+                "mo",
+                "mois",
+                "mes",
+                "mês",
+                "monat",
+                "maand",
+                "mies",
+                "mån",
+                "kuuk",
+                "bulan",
+                "tháng",
+                "hónap",
+                "lun",
+                "měs",
+                "месяц",
+                "мес",
+                "міс",
+                "μήν",
+                "شهر",
+                "أشهر",
+                "महीन",
+                "माह",
+                "เดือน",
+                "か月",
+                "ヶ月",
+                "カ月",
+                "个月",
+                "個月",
+                "개월",
             ],
             30 * DAY,
         ),
-        (&["min", "menit", "dak", "perc", "phút", "мин", "хвил", "λεπτ", "دق", "मिनट", "นาที", "分", "분"], MIN),
         (
             &[
-                "sem", "settiman", "woche", "week", "wk", "w", "tydz", "tyg", "veck", "uge", "uke", "viik", "hafta", "tuần", "hét", "týd", "săpt",
-                "недел", "тиж", "εβδ", "أسبوع", "أسابيع", "सप्ताह", "हफ", "สัปดา", "週", "周", "주",
+                "min",
+                "menit",
+                "dak",
+                "perc",
+                "phút",
+                "мин",
+                "хвил",
+                "λεπτ",
+                "دق",
+                "मिनट",
+                "นาที",
+                "分",
+                "분",
+            ],
+            MIN,
+        ),
+        (
+            &[
+                "sem",
+                "settiman",
+                "woche",
+                "week",
+                "wk",
+                "w",
+                "tydz",
+                "tyg",
+                "veck",
+                "uge",
+                "uke",
+                "viik",
+                "hafta",
+                "tuần",
+                "hét",
+                "týd",
+                "săpt",
+                "недел",
+                "тиж",
+                "εβδ",
+                "أسبوع",
+                "أسابيع",
+                "सप्ताह",
+                "हफ",
+                "สัปดา",
+                "週",
+                "周",
+                "주",
             ],
             7 * DAY,
         ),
-        (&["sec", "seg", "sek", "seconde", "secondo", "detik", "san", "giây", "másod", "сек", "δευτ", "ثان", "ثوان", "सेकंड", "วินาที", "秒", "초", "s"], 1),
+        (
+            &[
+                "sec",
+                "seg",
+                "sek",
+                "seconde",
+                "secondo",
+                "detik",
+                "san",
+                "giây",
+                "másod",
+                "сек",
+                "δευτ",
+                "ثان",
+                "ثوان",
+                "सेकंड",
+                "วินาที",
+                "秒",
+                "초",
+                "s",
+            ],
+            1,
+        ),
         (&["h", "heure", "stund", "ora", "ore", "uur", "godz"], HOUR),
         (&["d", "jour", "j", "tag", "giorn", "dag", "dzie"], DAY),
         (
             &[
-                "y", "an", "añ", "jahr", "jaar", "ann", "rok", "lat", "år", "vuo", "év", "yıl", "tahun", "năm", "let", "год", "лет", "рік", "рок", "έτ",
-                "سن", "वर", "साल", "ปี", "年", "년", "a",
+                "y",
+                "an",
+                "añ",
+                "jahr",
+                "jaar",
+                "ann",
+                "rok",
+                "lat",
+                "år",
+                "vuo",
+                "év",
+                "yıl",
+                "tahun",
+                "năm",
+                "let",
+                "год",
+                "лет",
+                "рік",
+                "рок",
+                "έτ",
+                "سن",
+                "वर",
+                "साल",
+                "ปี",
+                "年",
+                "년",
+                "a",
             ],
             365 * DAY,
         ),
     ];
     for (prefixes, secs) in UNITS {
         // "s" and "a" only as the whole unit ("5s", "il y a 16 a"), as before
-        if prefixes.iter().any(|x| if *x == "s" || *x == "a" { u == *x } else { u.starts_with(x) }) {
+        if prefixes.iter().any(|x| {
+            if *x == "s" || *x == "a" {
+                u == *x
+            } else {
+                u.starts_with(x)
+            }
+        }) {
             return Some(n * secs);
         }
     }
@@ -397,11 +607,40 @@ mod relative_time_tests {
         ] {
             assert_eq!(relative_secs(s), Some(want), "{s}");
         }
-        for s in ["1.2M views", "3 M de vues", "12 k vues", "1,5 Mio. Aufrufe", "450 watching", "Ed Sheeran", "100% DOCS", "21\u{a0}M", "4,8\u{a0}k", "2,5\u{a0}Md", "7,5 k spectateurs",
-            "108\u{a0}799 visningar", "108 тыс. просмотров", "23 просмотра", "108 тис. переглядів", "108 tys. wyświetleń", "108 B görüntüleme",
-            "108 rb x ditonton", "10万回視聴", "10万次观看", "조회수 10만회", "108 t. katselukertaa", "108k avspillinger", "108 N lượt xem",
-            "108 mil visualizações", "108 tis. zhlédnutí", "108 E megtekintés", "108 K de vizionări", "108 χιλ. προβολές", "108 ألف مشاهدة",
-            "23 हज़ार व्यू", "การดู 1 แสน ครั้ง"] {
+        for s in [
+            "1.2M views",
+            "3 M de vues",
+            "12 k vues",
+            "1,5 Mio. Aufrufe",
+            "450 watching",
+            "Ed Sheeran",
+            "100% DOCS",
+            "21\u{a0}M",
+            "4,8\u{a0}k",
+            "2,5\u{a0}Md",
+            "7,5 k spectateurs",
+            "108\u{a0}799 visningar",
+            "108 тыс. просмотров",
+            "23 просмотра",
+            "108 тис. переглядів",
+            "108 tys. wyświetleń",
+            "108 B görüntüleme",
+            "108 rb x ditonton",
+            "10万回視聴",
+            "10万次观看",
+            "조회수 10만회",
+            "108 t. katselukertaa",
+            "108k avspillinger",
+            "108 N lượt xem",
+            "108 mil visualizações",
+            "108 tis. zhlédnutí",
+            "108 E megtekintés",
+            "108 K de vizionări",
+            "108 χιλ. προβολές",
+            "108 ألف مشاهدة",
+            "23 हज़ार व्यू",
+            "การดู 1 แสน ครั้ง",
+        ] {
             assert_eq!(relative_secs(s), None, "{s}");
         }
     }
@@ -418,7 +657,7 @@ pub fn relative_from_ts(ts: i64) -> String {
     use crate::i18n::{self, AppLanguage};
 
     let d = (now() - ts).max(0);
-    let (n, messages, ru, uk) = if d < 60 {
+    let (n, messages, ru, uk, ar) = if d < 60 {
         return i18n::t("just now").into();
     } else if d < 3600 {
         (
@@ -426,6 +665,7 @@ pub fn relative_from_ts(ts: i64) -> String {
             ["{0} minute ago", "{0} minutes ago"],
             ["минуту", "минуты", "минут"],
             ["хвилину", "хвилини", "хвилин"],
+            ["دقيقة", "دقيقتين", "دقائق"],
         )
     } else if d < 86400 {
         (
@@ -433,6 +673,7 @@ pub fn relative_from_ts(ts: i64) -> String {
             ["{0} hour ago", "{0} hours ago"],
             ["час", "часа", "часов"],
             ["годину", "години", "годин"],
+            ["ساعة", "ساعتين", "ساعات"],
         )
     } else if d < 7 * 86400 {
         (
@@ -440,6 +681,7 @@ pub fn relative_from_ts(ts: i64) -> String {
             ["{0} day ago", "{0} days ago"],
             ["день", "дня", "дней"],
             ["день", "дні", "днів"],
+            ["يوم", "يومين", "أيام"],
         )
     } else if d < 30 * 86400 {
         (
@@ -447,6 +689,7 @@ pub fn relative_from_ts(ts: i64) -> String {
             ["{0} week ago", "{0} weeks ago"],
             ["неделю", "недели", "недель"],
             ["тиждень", "тижні", "тижнів"],
+            ["أسبوع", "أسبوعين", "أسابيع"],
         )
     } else if d < 365 * 86400 {
         (
@@ -454,6 +697,7 @@ pub fn relative_from_ts(ts: i64) -> String {
             ["{0} month ago", "{0} months ago"],
             ["месяц", "месяца", "месяцев"],
             ["місяць", "місяці", "місяців"],
+            ["شهر", "شهرين", "أشهر"],
         )
     } else {
         (
@@ -461,12 +705,22 @@ pub fn relative_from_ts(ts: i64) -> String {
             ["{0} year ago", "{0} years ago"],
             ["год", "года", "лет"],
             ["рік", "роки", "років"],
+            ["سنة", "سنتين", "سنوات"],
         )
     };
 
     let (forms, suffix) = match i18n::language() {
         AppLanguage::Russian => (ru, "назад"),
         AppLanguage::Ukrainian => (uk, "тому"),
+        AppLanguage::Arabic => {
+            let [singular, dual, plural] = ar;
+            return match n {
+                1 => format!("قبل {singular}"),
+                2 => format!("قبل {dual}"),
+                _ if (3..=10).contains(&(n % 100)) => format!("قبل {n} {plural}"),
+                _ => format!("قبل {n} {singular}"),
+            };
+        }
         _ => return i18n::format(messages[usize::from(n != 1)], &[&n]),
     };
     let form = match (n % 100, n % 10) {
@@ -480,8 +734,14 @@ pub fn relative_from_ts(ts: i64) -> String {
 
 /// "27K", "1.2M", "27,124", "3 likes" -> a number; None without digits.
 pub fn parse_count(s: &str) -> Option<u64> {
-    let t: String = s.trim().chars().filter(|c| *c != ',' && !c.is_whitespace()).collect();
-    let end = t.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(t.len());
+    let t: String = s
+        .trim()
+        .chars()
+        .filter(|c| *c != ',' && !c.is_whitespace())
+        .collect();
+    let end = t
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(t.len());
     let num: f64 = t[..end].parse().ok()?;
     let mult = match t[end..].chars().next().map(|c| c.to_ascii_uppercase()) {
         Some('K') => 1e3,
@@ -502,7 +762,11 @@ pub fn compact_number(n: u64) -> String {
 }
 
 fn trim_dec(v: f64, suf: &str) -> String {
-    if v >= 100.0 { format!("{:.0}{suf}", v) } else { format!("{:.1}{suf}", v).replace(".0", "") }
+    if v >= 100.0 {
+        format!("{:.0}{suf}", v)
+    } else {
+        format!("{:.1}{suf}", v).replace(".0", "")
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,9 @@ pub struct DownloadsPage {
 
 impl DownloadsPage {
     pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
-        Self { scroll: ScrollHandle::new() }
+        Self {
+            scroll: ScrollHandle::new(),
+        }
     }
 }
 
@@ -27,16 +29,29 @@ impl Render for DownloadsPage {
             let vid = j.video.id.clone();
             let (status, color): (String, Hsla) = match &j.status {
                 JobStatus::Queued => (t("Queued").into(), p.text2),
-                JobStatus::Running => (if j.detail.is_empty() { t("Starting…").into() } else { j.detail.clone() }, p.text2),
-                JobStatus::Done(path) => (tf!("Saved to {0}", path), rgb(0x2ba640).into()),
-                JobStatus::Failed(e) => (tf!("Failed: {0}", e), rgb(0xff4e45).into()),
+                JobStatus::Running => (
+                    if j.detail.is_empty() {
+                        t("Starting…").into()
+                    } else {
+                        j.detail.clone()
+                    },
+                    p.text2,
+                ),
+                JobStatus::Done(path) => {
+                    (tf!(selectable: "Saved to {0}", path), rgb(0x2ba640).into())
+                }
+                JobStatus::Failed(e) => (tf!(selectable: "Failed: {0}", e), rgb(0xff4e45).into()),
                 JobStatus::Cancelled => (t("Cancelled").into(), p.text3),
             };
-            let done_path = if let JobStatus::Done(path) = &j.status { Some(path.clone()) } else { None };
+            let done_path = if let JobStatus::Done(path) = &j.status {
+                Some(path.clone())
+            } else {
+                None
+            };
             let running = matches!(j.status, JobStatus::Running | JobStatus::Queued);
             list = list.child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .items_center()
                     .gap_4()
                     .p_3()
@@ -57,7 +72,7 @@ impl Render for DownloadsPage {
                             .min_w_0()
                             .gap_2()
                             .child(selectable_text(SharedString::from(format!("dl-title-{id}")), j.video.title.clone()).text_base().font_weight(FontWeight::SEMIBOLD).text_color(p.text).truncate())
-                            .child(selectable_text(SharedString::from(format!("dl-meta-{id}")), tf!("{0}, format {1}", j.video.channel_name, j.format)).text_xs().text_color(p.text2))
+                            .child(selectable_text(SharedString::from(format!("dl-meta-{id}")), tf!(selectable: "{0}, format {1}", j.video.channel_name, j.format)).text_xs().text_color(p.text2))
                             .when(running, |d| {
                                 d.child(div().w_full().h(px(4.)).rounded_full().bg(p.hover).child(div().h_full().rounded_full().w(relative(j.progress.clamp(0.0, 1.0))).bg(p.accent)))
                             })
@@ -86,13 +101,16 @@ impl Render for DownloadsPage {
                     .gap_4()
                     .child(
                         div()
-                            .flex()
+                            .flex_row_dir(cx)
+                            .flex_wrap()
+                            .gap_y_2()
                             .items_center()
                             .justify_between()
                             .child(section_title(t("Downloads"), cx).text_3xl())
                             .child(
                                 div()
-                                    .flex()
+                                    .flex_row_dir(cx)
+                                    .flex_wrap()
                                     .gap_2()
                                     .when(jobs.iter().any(|j| !matches!(j.status, JobStatus::Running | JobStatus::Queued)), |d| {
                                         d.child(pill("dl-clear", Some("list-x"), "Clear list", cx).on_click(|_, _, cx| crate::downloads::clear_history(cx)))
@@ -118,7 +136,7 @@ impl Render for DownloadsPage {
                                     })),
                             ),
                     )
-                    .child(selectable_text("dl-dir-info", tf!("Saving to {0}. Engine {1}", dir, if ytdlp { t("yt-dlp (all qualities, SponsorBlock chapters)") } else { t("built-in (combined 360p/720p or audio only). Install yt-dlp for more") })).text_sm().text_color(p.text2))
+                    .child(selectable_text("dl-dir-info", tf!(selectable: "Saving to {0}. Engine {1}", dir, if ytdlp { t("yt-dlp (all qualities, SponsorBlock chapters)") } else { t("built-in (combined 360p/720p or audio only). Install yt-dlp for more") })).text_sm().text_color(p.text2))
                     .child(list),
             ),
         )

@@ -73,7 +73,13 @@ fn resolve_anonymous(video_id: &str) -> Result<StreamInfo> {
             .or_else(|e| ios(video_id).map_err(|e2| anyhow!("{e}\n{e2}")))
             .or_else(|e| android_vr(video_id).map_err(|e2| anyhow!("{e}\n{e2}"))),
         "android_vr" => android_vr(video_id)
-            .and_then(|i| if i.video.is_empty() && i.hls_url.is_none() { Err(anyhow!("Android VR returned no playable formats")) } else { Ok(i) })
+            .and_then(|i| {
+                if i.video.is_empty() && i.hls_url.is_none() {
+                    Err(anyhow!("Android VR returned no playable formats"))
+                } else {
+                    Ok(i)
+                }
+            })
             .or_else(|e| visionos(video_id).map_err(|e2| anyhow!("{e}\n{e2}")))
             .or_else(|e| ios(video_id).map_err(|e2| anyhow!("{e}\n{e2}"))),
         _ => {
@@ -98,7 +104,12 @@ fn resolve_anonymous(video_id: &str) -> Result<StreamInfo> {
             let vision = visionos(video_id);
             if crate::perf::on() {
                 match &vision {
-                    Ok(i) => eprintln!("[streams] visionos ok in {:?}: {} variants, hls={:?}", t.elapsed(), i.video.len(), i.hls_url.as_deref().map(|u| &u[..u.len().min(80)])),
+                    Ok(i) => eprintln!(
+                        "[streams] visionos ok in {:?}: {} variants, hls={:?}",
+                        t.elapsed(),
+                        i.video.len(),
+                        i.hls_url.as_deref().map(|u| &u[..u.len().min(80)])
+                    ),
                     Err(e) => eprintln!("[streams] visionos failed in {:?}: {e}", t.elapsed()),
                 }
             }
@@ -126,7 +137,9 @@ fn resolve_anonymous(video_id: &str) -> Result<StreamInfo> {
             let id = video_id.to_string();
             let vr = std::thread::spawn(move || android_vr(&id));
             let yd = ytdlp_streams(video_id);
-            let vr = vr.join().unwrap_or_else(|_| Err(anyhow!("innertube thread panicked")));
+            let vr = vr
+                .join()
+                .unwrap_or_else(|_| Err(anyhow!("innertube thread panicked")));
             match (yd, vr) {
                 (Ok(mut y), Ok(v)) => {
                     if y.storyboard.is_none() {
@@ -158,7 +171,9 @@ const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4 * 3600);
 
 fn cache_get(id: &str) -> Option<StreamInfo> {
     let c = cache().lock();
-    c.get(id).filter(|(_, t)| t.elapsed() < CACHE_TTL && !c.is_empty()).map(|(i, _)| i.clone())
+    c.get(id)
+        .filter(|(_, t)| t.elapsed() < CACHE_TTL && !c.is_empty())
+        .map(|(i, _)| i.clone())
 }
 
 fn cache_put(id: &str, info: &StreamInfo) {
@@ -181,8 +196,11 @@ pub fn invalidate(id: &str) {
 }
 
 fn inflight_lock(id: &str) -> std::sync::Arc<parking_lot::Mutex<()>> {
-    static L: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<parking_lot::Mutex<()>>>>> =
-        std::sync::OnceLock::new();
+    static L: std::sync::OnceLock<
+        parking_lot::Mutex<
+            std::collections::HashMap<String, std::sync::Arc<parking_lot::Mutex<()>>>,
+        >,
+    > = std::sync::OnceLock::new();
     let mut m = L.get_or_init(Default::default).lock();
     if m.len() > 200 {
         m.retain(|_, v| std::sync::Arc::strong_count(v) > 1);
@@ -201,8 +219,16 @@ pub fn visitor_data() -> Option<String> {
         }
     }
     let body = json!({ "context": { "client": { "clientName": "WEB", "clientVersion": crate::api::innertube::WEB_VERSION, "hl": "en", "gl": "US" } } });
-    let r = http::post_json("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false", &body, &[]).ok()?;
-    let v = r.pointer("/responseContext/visitorData")?.as_str()?.to_string();
+    let r = http::post_json(
+        "https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false",
+        &body,
+        &[],
+    )
+    .ok()?;
+    let v = r
+        .pointer("/responseContext/visitorData")?
+        .as_str()?
+        .to_string();
     *VD.lock() = Some((v.clone(), std::time::Instant::now()));
     Some(v)
 }
@@ -211,7 +237,8 @@ const VISION_VERSION: &str = "1.02";
 const VISION_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 
 const IOS_VERSION: &str = "20.10.4";
-const IOS_UA: &str = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+const IOS_UA: &str =
+    "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
 
 /// An Apple Innertube client whose player response carries a usable HLS manifest.
 struct HlsClient {
@@ -229,19 +256,22 @@ struct HlsClient {
 /// response, playback from its HLS manifest (variants up to 4K with separate
 /// audio renditions).
 fn visionos(video_id: &str) -> Result<StreamInfo> {
-    hls_client(video_id, HlsClient {
-        label: "visionOS",
-        source: "visionos",
-        id: "101",
-        version: VISION_VERSION,
-        ua: VISION_UA,
-        client: json!({
-            "clientName": "VISIONOS", "clientVersion": VISION_VERSION,
-            "deviceMake": "Apple", "deviceModel": "RealityDevice17,1",
-            "osName": "visionOS", "osVersion": "26.5.23O471",
-        }),
-        visitor: true,
-    })
+    hls_client(
+        video_id,
+        HlsClient {
+            label: "visionOS",
+            source: "visionos",
+            id: "101",
+            version: VISION_VERSION,
+            ua: VISION_UA,
+            client: json!({
+                "clientName": "VISIONOS", "clientVersion": VISION_VERSION,
+                "deviceMake": "Apple", "deviceModel": "RealityDevice17,1",
+                "osName": "visionOS", "osVersion": "26.5.23O471",
+            }),
+            visitor: true,
+        },
+    )
 }
 
 /// iOS client: the same HLS playback as visionOS, and it also plays videos
@@ -249,23 +279,28 @@ fn visionos(video_id: &str) -> Result<StreamInfo> {
 /// The iOS client's HLS master playlist for a video (used to download videos
 /// made for kids, which yt-dlp gets no formats for).
 pub fn ios_hls_manifest(video_id: &str) -> Result<String> {
-    ios(video_id)?.hls_url.ok_or_else(|| anyhow!("iOS: no HLS manifest"))
+    ios(video_id)?
+        .hls_url
+        .ok_or_else(|| anyhow!("iOS: no HLS manifest"))
 }
 
 fn ios(video_id: &str) -> Result<StreamInfo> {
-    hls_client(video_id, HlsClient {
-        label: "iOS",
-        source: "ios",
-        id: "5",
-        version: IOS_VERSION,
-        ua: IOS_UA,
-        client: json!({
-            "clientName": "IOS", "clientVersion": IOS_VERSION,
-            "deviceMake": "Apple", "deviceModel": "iPhone16,2",
-            "osName": "iPhone", "osVersion": "18.3.2.22D82",
-        }),
-        visitor: false,
-    })
+    hls_client(
+        video_id,
+        HlsClient {
+            label: "iOS",
+            source: "ios",
+            id: "5",
+            version: IOS_VERSION,
+            ua: IOS_UA,
+            client: json!({
+                "clientName": "IOS", "clientVersion": IOS_VERSION,
+                "deviceMake": "Apple", "deviceModel": "iPhone16,2",
+                "osName": "iPhone", "osVersion": "18.3.2.22D82",
+            }),
+            visitor: false,
+        },
+    )
 }
 
 /// The visitor id that last got the iOS client an HLS manifest. YouTube puts
@@ -299,7 +334,11 @@ fn hls_client(video_id: &str, c: HlsClient) -> Result<StreamInfo> {
         if !vd.is_empty() {
             headers.push(("X-Goog-Visitor-Id", vd));
         }
-        let r = http::post_json("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", &body, &headers)?;
+        let r = http::post_json(
+            "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            &body,
+            &headers,
+        )?;
         if let Some(err) = playability_error(&r, Some(label)) {
             return Err(err);
         }
@@ -313,11 +352,18 @@ fn hls_client(video_id: &str, c: HlsClient) -> Result<StreamInfo> {
         let mut last = None;
         for attempt in 0..5 {
             let kept = IOS_VISITOR.lock().clone();
-            let vd = if attempt % 2 == 0 { kept.clone() } else { String::new() };
+            let vd = if attempt % 2 == 0 {
+                kept.clone()
+            } else {
+                String::new()
+            };
             let r = call(&vd)?;
             if has_hls(&r) {
                 if vd.is_empty() {
-                    if let Some(v) = r.pointer("/responseContext/visitorData").and_then(Value::as_str) {
+                    if let Some(v) = r
+                        .pointer("/responseContext/visitorData")
+                        .and_then(Value::as_str)
+                    {
                         *IOS_VISITOR.lock() = v.to_string();
                     }
                 }
@@ -332,11 +378,15 @@ fn hls_client(video_id: &str, c: HlsClient) -> Result<StreamInfo> {
         last.ok_or_else(|| anyhow!("{label}: no response"))?
     };
     let mut info = parse_player(&r);
-    let hls = info.hls_url.clone().ok_or_else(|| anyhow!("{label}: no HLS manifest"))?;
+    let hls = info
+        .hls_url
+        .clone()
+        .ok_or_else(|| anyhow!("{label}: no HLS manifest"))?;
     // adaptive URLs from this client need a PO token; only the HLS path is usable
     info.audio.clear();
     info.muxed.clear();
-    let (video, audio, hls_orig_lang) = hls_variants(video_id, &hls, !info.is_live).unwrap_or_default();
+    let (video, audio, hls_orig_lang) =
+        hls_variants(video_id, &hls, !info.is_live).unwrap_or_default();
     info.video = video;
     // audio renditions (dubbed tracks): only names, the proxy picks the playlist
     info.audio = audio;
@@ -350,7 +400,11 @@ fn hls_client(video_id: &str, c: HlsClient) -> Result<StreamInfo> {
 
 /// The variants of an HLS master playlist, as formats for the quality menu,
 /// plus its audio renditions (one per language, `audio_language` = display name).
-fn hls_variants(video_id: &str, master_url: &str, vod: bool) -> Result<(Vec<StreamFormat>, Vec<StreamFormat>, Option<String>)> {
+fn hls_variants(
+    video_id: &str,
+    master_url: &str,
+    vod: bool,
+) -> Result<(Vec<StreamFormat>, Vec<StreamFormat>, Option<String>)> {
     let text = http::get_text(master_url)?;
     if vod && text.contains("#EXT-X-STREAM-INF:") {
         crate::player::proxy::remember_vod_playlist(master_url, text.as_str().into());
@@ -358,7 +412,11 @@ fn hls_variants(video_id: &str, master_url: &str, vod: bool) -> Result<(Vec<Stre
     crate::player::shorts_preload::remember_master(video_id, master_url, &text);
     let attr = |l: &str, k: &str| -> Option<String> {
         let rest = l.split(&format!("{k}=")).nth(1)?;
-        Some(if let Some(q) = rest.strip_prefix('"') { q.split('"').next()?.to_string() } else { rest.split(',').next()?.to_string() })
+        Some(if let Some(q) = rest.strip_prefix('"') {
+            q.split('"').next()?.to_string()
+        } else {
+            rest.split(',').next()?.to_string()
+        })
     };
     let mut out: Vec<StreamFormat> = Vec::new();
     let mut audio: Vec<StreamFormat> = Vec::new();
@@ -366,16 +424,24 @@ fn hls_variants(video_id: &str, master_url: &str, vod: bool) -> Result<(Vec<Stre
     let mut lines = text.lines();
     while let Some(l) = lines.next() {
         if l.starts_with("#EXT-X-MEDIA") && l.contains("TYPE=AUDIO") {
-            let lang_code = attr(l, "LANGUAGE").and_then(|c| clean_lang(&c)).unwrap_or_default();
+            let lang_code = attr(l, "LANGUAGE")
+                .and_then(|c| clean_lang(&c))
+                .unwrap_or_default();
             let media_name = hls_media_name(l);
             let is_orig = l.contains("acont=original")
                 || l.contains("acont%3Doriginal")
-                || media_name.as_deref().map(is_original_audio_label).unwrap_or(false);
+                || media_name
+                    .as_deref()
+                    .map(is_original_audio_label)
+                    .unwrap_or(false);
             if is_orig && !lang_code.is_empty() && hls_orig_lang.is_none() {
                 hls_orig_lang = Some(lang_code.clone());
             }
             if let Some(name) = media_name {
-                if !audio.iter().any(|a| a.audio_language.as_deref() == Some(name.as_str())) {
+                if !audio
+                    .iter()
+                    .any(|a| a.audio_language.as_deref() == Some(name.as_str()))
+                {
                     audio.push(StreamFormat {
                         mime: "audio/hls".into(),
                         is_audio: true,
@@ -394,14 +460,24 @@ fn hls_variants(video_id: &str, master_url: &str, vod: bool) -> Result<(Vec<Stre
         }
         let Some(url) = lines.next() else { break };
         let (w, h) = attr(l, "RESOLUTION")
-            .and_then(|r| r.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))))
+            .and_then(|r| {
+                r.split_once('x')
+                    .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+            })
             .unwrap_or((0, 0));
-        let fps = attr(l, "FRAME-RATE").and_then(|f| f.parse::<f64>().ok()).unwrap_or(0.0) as u32;
-        let bitrate = attr(l, "BANDWIDTH").and_then(|b| b.parse().ok()).unwrap_or(0);
+        let fps = attr(l, "FRAME-RATE")
+            .and_then(|f| f.parse::<f64>().ok())
+            .unwrap_or(0.0) as u32;
+        let bitrate = attr(l, "BANDWIDTH")
+            .and_then(|b| b.parse().ok())
+            .unwrap_or(0);
         let class = quality_class(w, h);
         let codecs = attr(l, "CODECS").unwrap_or_default();
         // one entry per quality: keep SDR over HDR, then the higher-bitrate variant
-        if let Some(e) = out.iter_mut().find(|e| quality_class(e.width, e.height) == class && e.fps == fps) {
+        if let Some(e) = out
+            .iter_mut()
+            .find(|e| quality_class(e.width, e.height) == class && e.fps == fps)
+        {
             let key = |c: &str, b: u64| (!is_hdr_codecs(c), b);
             if key(&codecs, bitrate) > key(&e.codecs, e.bitrate) {
                 e.bitrate = bitrate;
@@ -419,7 +495,14 @@ fn hls_variants(video_id: &str, master_url: &str, vod: bool) -> Result<(Vec<Stre
             width: w,
             height: h,
             fps,
-            quality_label: format!("{class}p{}", if fps > 30 { fps.to_string() } else { String::new() }),
+            quality_label: format!(
+                "{class}p{}",
+                if fps > 30 {
+                    fps.to_string()
+                } else {
+                    String::new()
+                }
+            ),
             ..Default::default()
         });
     }
@@ -444,7 +527,10 @@ fn hls_variants(video_id: &str, master_url: &str, vod: bool) -> Result<(Vec<Stre
 
 /// NAME="..." of an #EXT-X-MEDIA line.
 pub fn hls_media_name(l: &str) -> Option<String> {
-    let rest = l.split(",NAME=\"").nth(1).or_else(|| l.split(":NAME=\"").nth(1))?;
+    let rest = l
+        .split(",NAME=\"")
+        .nth(1)
+        .or_else(|| l.split(":NAME=\"").nth(1))?;
     Some(rest.split('"').next()?.to_string())
 }
 
@@ -458,7 +544,11 @@ pub fn hls_audio_choice(info: &StreamInfo, picked: Option<&str>) -> Option<Strin
         return Some(p.to_string());
     }
     let st = crate::store::settings_snapshot();
-    let original = info.audio.iter().find(|a| a.audio_default).and_then(|a| a.audio_language.clone());
+    let original = info
+        .audio
+        .iter()
+        .find(|a| a.audio_default)
+        .and_then(|a| a.audio_language.clone());
     if !st.original_audio {
         let lang = st.language.to_lowercase();
         if let Some(a) = info.audio.iter().find(|a| {
@@ -488,7 +578,12 @@ fn android_vr(video_id: &str) -> Result<StreamInfo> {
     let r = http::post_json(
         "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
         &body,
-        &[("User-Agent", VR_UA), ("X-YouTube-Client-Name", "28"), ("X-YouTube-Client-Version", VR_VERSION), ("X-Goog-Visitor-Id", &vd)],
+        &[
+            ("User-Agent", VR_UA),
+            ("X-YouTube-Client-Name", "28"),
+            ("X-YouTube-Client-Version", VR_VERSION),
+            ("X-Goog-Visitor-Id", &vd),
+        ],
     )?;
     if let Some(err) = playability_error(&r, None) {
         return Err(err);
@@ -509,7 +604,11 @@ const TV5_UA: &str = "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538
 fn tv(video_id: &str) -> Result<StreamInfo> {
     let rt = crate::api::jsc::runtime();
     let token = crate::api::auth::access_token();
-    let label = if token.is_some() { "TV (signed in)" } else { "TV" };
+    let label = if token.is_some() {
+        "TV (signed in)"
+    } else {
+        "TV"
+    };
     let player = crate::api::jsc::player().map_err(|e| anyhow!("{label}: player script: {e}"))?;
     let t = std::time::Instant::now();
     let mut r = tv_player_response(video_id, token.as_deref(), player.sts)?;
@@ -520,7 +619,13 @@ fn tv(video_id: &str) -> Result<StreamInfo> {
     let mut info = parse_player(&r);
     info.source = if token.is_some() { "tv-account" } else { "tv" };
     if crate::perf::on() {
-        eprintln!("[streams] {label} ok in {:?} via {}: {} video, {} audio formats", t.elapsed(), rt.describe(), info.video.len(), info.audio.len());
+        eprintln!(
+            "[streams] {label} ok in {:?} via {}: {} video, {} audio formats",
+            t.elapsed(),
+            rt.describe(),
+            info.video.len(),
+            info.audio.len()
+        );
     }
     if info.video.is_empty() && info.muxed.is_empty() && info.hls_url.is_none() {
         return Err(anyhow!("{label}: no playable formats"));
@@ -531,7 +636,11 @@ fn tv(video_id: &str) -> Result<StreamInfo> {
 /// The TV client's player response, as the account when a token is given.
 /// Besides formats it carries the `playbackTracking` URLs the account's watch
 /// history is reported to.
-pub(crate) fn tv_player_response(video_id: &str, token: Option<&str>, sts: Option<u64>) -> Result<Value> {
+pub(crate) fn tv_player_response(
+    video_id: &str,
+    token: Option<&str>,
+    sts: Option<u64>,
+) -> Result<Value> {
     let s = crate::store::settings_snapshot();
     let body = json!({
         "videoId": video_id,
@@ -556,7 +665,11 @@ pub(crate) fn tv_player_response(video_id: &str, token: Option<&str>, sts: Optio
     if let Some(a) = &auth {
         headers.push(("Authorization", a));
     }
-    http::post_json("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", &body, &headers)
+    http::post_json(
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+        &body,
+        &headers,
+    )
 }
 
 /// Gives every format a usable `url`: solves the `n` parameter and, for formats
@@ -575,7 +688,9 @@ fn unlock_stream_urls(r: &mut Value, player: &crate::api::jsc::Player) -> Result
             None => {
                 let cipher = f.get("signatureCipher").and_then(Value::as_str)?;
                 let q: std::collections::HashMap<String, String> =
-                    url::form_urlencoded::parse(cipher.as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+                    url::form_urlencoded::parse(cipher.as_bytes())
+                        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                        .collect();
                 let url = q.get("url")?.clone();
                 let s = q.get("s")?.clone();
                 let sp = q.get("sp").cloned().unwrap_or_else(|| "signature".into());
@@ -583,20 +698,46 @@ fn unlock_stream_urls(r: &mut Value, player: &crate::api::jsc::Player) -> Result
             }
         };
         let url = Url::parse(&url).ok()?;
-        let n = url.query_pairs().find(|(k, _)| k == "n").map(|(_, v)| v.into_owned());
+        let n = url
+            .query_pairs()
+            .find(|(k, _)| k == "n")
+            .map(|(_, v)| v.into_owned());
         Some(Entry { url, n, sig })
     }
     let lists = ["adaptiveFormats", "formats"];
     let mut entries: Vec<Vec<Option<Entry>>> = Vec::new();
     for list in lists {
-        let fs = r.pointer(&format!("/streamingData/{list}")).and_then(Value::as_array).cloned().unwrap_or_default();
+        let fs = r
+            .pointer(&format!("/streamingData/{list}"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         entries.push(fs.iter().map(entry).collect());
     }
-    let n: Vec<String> = entries.iter().flatten().flatten().filter_map(|e| e.n.clone()).collect();
-    let sig: Vec<String> = entries.iter().flatten().flatten().filter_map(|e| e.sig.as_ref().map(|s| s.0.clone())).collect();
-    let solved = if n.is_empty() && sig.is_empty() { Default::default() } else { crate::api::jsc::solve(player, &n, &sig)? };
+    let n: Vec<String> = entries
+        .iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.n.clone())
+        .collect();
+    let sig: Vec<String> = entries
+        .iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.sig.as_ref().map(|s| s.0.clone()))
+        .collect();
+    let solved = if n.is_empty() && sig.is_empty() {
+        Default::default()
+    } else {
+        crate::api::jsc::solve(player, &n, &sig)?
+    };
     for (list, entries) in lists.iter().zip(entries) {
-        let Some(fs) = r.pointer_mut(&format!("/streamingData/{list}")).and_then(Value::as_array_mut) else { continue };
+        let Some(fs) = r
+            .pointer_mut(&format!("/streamingData/{list}"))
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
         for (f, e) in fs.iter_mut().zip(entries) {
             let Some(mut e) = e else { continue };
             let n_ok = match &e.n {
@@ -605,7 +746,13 @@ fn unlock_stream_urls(r: &mut Value, player: &crate::api::jsc::Player) -> Result
                         let pairs: Vec<(String, String)> = e
                             .url
                             .query_pairs()
-                            .map(|(k, val)| if k == "n" { (k.into_owned(), v.clone()) } else { (k.into_owned(), val.into_owned()) })
+                            .map(|(k, val)| {
+                                if k == "n" {
+                                    (k.into_owned(), v.clone())
+                                } else {
+                                    (k.into_owned(), val.into_owned())
+                                }
+                            })
                             .collect();
                         e.url.query_pairs_mut().clear().extend_pairs(pairs);
                         true
@@ -640,11 +787,17 @@ fn unlock_stream_urls(r: &mut Value, player: &crate::api::jsc::Player) -> Result
 /// Keeps the machine-readable `status` (such as `LOGIN_REQUIRED`) alongside a
 /// localized `reason` so `needs_sign_in` still triggers for non-English locales.
 fn playability_error(r: &Value, label: Option<&str>) -> Option<anyhow::Error> {
-    let status = r.pointer("/playabilityStatus/status").and_then(Value::as_str).unwrap_or("");
+    let status = r
+        .pointer("/playabilityStatus/status")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if status == "OK" {
         return None;
     }
-    let reason = r.pointer("/playabilityStatus/reason").and_then(Value::as_str).unwrap_or("");
+    let reason = r
+        .pointer("/playabilityStatus/reason")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let detail = match (status.is_empty(), reason.is_empty()) {
         (_, true) => status.to_string(),
         (true, false) => reason.to_string(),
@@ -663,7 +816,10 @@ fn parse_format(f: &Value) -> Option<StreamFormat> {
     let (mime, codecs) = match mime_full.split_once(';') {
         Some((m, c)) => (
             m.trim().to_string(),
-            c.trim().trim_start_matches("codecs=").trim_matches('"').to_string(),
+            c.trim()
+                .trim_start_matches("codecs=")
+                .trim_matches('"')
+                .to_string(),
         ),
         None => (mime_full.to_string(), String::new()),
     };
@@ -676,13 +832,23 @@ fn parse_format(f: &Value) -> Option<StreamFormat> {
         width: f.get("width").and_then(Value::as_u64).unwrap_or(0) as u32,
         height: f.get("height").and_then(Value::as_u64).unwrap_or(0) as u32,
         fps: f.get("fps").and_then(Value::as_u64).unwrap_or(0) as u32,
-        quality_label: f.get("qualityLabel").and_then(Value::as_str).unwrap_or("").to_string(),
+        quality_label: f
+            .get("qualityLabel")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         audio_language: f
             .pointer("/audioTrack/displayName")
             .and_then(Value::as_str)
             .map(str::to_string),
-        audio_default: f.pointer("/audioTrack/audioIsDefault").and_then(Value::as_bool).unwrap_or(true),
-        content_length: f.get("contentLength").and_then(Value::as_str).and_then(|c| c.parse().ok()),
+        audio_default: f
+            .pointer("/audioTrack/audioIsDefault")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        content_length: f
+            .get("contentLength")
+            .and_then(Value::as_str)
+            .and_then(|c| c.parse().ok()),
         is_muxed: false,
         mime,
         codecs,
@@ -710,7 +876,10 @@ fn clean_lang(code: &str) -> Option<String> {
         return None;
     }
     let low = c.to_ascii_lowercase();
-    if matches!(low.as_str(), "und" | "zxx" | "mul" | "qaa" | "none" | "unknown") {
+    if matches!(
+        low.as_str(),
+        "und" | "zxx" | "mul" | "qaa" | "none" | "unknown"
+    ) {
         return None;
     }
     Some(c.to_string())
@@ -730,7 +899,12 @@ fn extract_innertube_original_lang(r: &Value) -> Option<String> {
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .chain(sd.get("formats").and_then(Value::as_array).into_iter().flatten());
+            .chain(
+                sd.get("formats")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+            );
 
         let mut default_lang: Option<String> = None;
         for f in formats {
@@ -739,10 +913,22 @@ fn extract_innertube_original_lang(r: &Value) -> Option<String> {
                 continue;
             }
             let xtags = f.get("xtags").and_then(Value::as_str).unwrap_or("");
-            let track_id = f.pointer("/audioTrack/id").and_then(Value::as_str).unwrap_or("");
-            let display = f.pointer("/audioTrack/displayName").and_then(Value::as_str).unwrap_or("");
-            let is_default = f.pointer("/audioTrack/audioIsDefault").and_then(Value::as_bool).unwrap_or(false);
-            let is_auto_dub = f.pointer("/audioTrack/isAutoDubbed").and_then(Value::as_bool).unwrap_or(false);
+            let track_id = f
+                .pointer("/audioTrack/id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let display = f
+                .pointer("/audioTrack/displayName")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let is_default = f
+                .pointer("/audioTrack/audioIsDefault")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let is_auto_dub = f
+                .pointer("/audioTrack/isAutoDubbed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
             let lang = track_id
                 .split('.')
@@ -774,7 +960,10 @@ fn extract_innertube_original_lang(r: &Value) -> Option<String> {
         // Prefer canonical original audio track (suffix ".4") over localized defaultAudioTrackIndex
         if let Some(lang) = tracks.iter().find_map(|tr| {
             let id = tr.get("audioTrackId").and_then(Value::as_str)?;
-            id.ends_with(".4").then(|| id.split('.').next()).flatten().and_then(clean_lang)
+            id.ends_with(".4")
+                .then(|| id.split('.').next())
+                .flatten()
+                .and_then(clean_lang)
         }) {
             return Some(lang);
         }
@@ -800,14 +989,21 @@ fn parse_player(r: &Value) -> StreamInfo {
         title: s(&vd, "/title").unwrap_or_default(),
         author: s(&vd, "/author").unwrap_or_default(),
         channel_id: s(&vd, "/channelId").unwrap_or_default(),
-        length_secs: s(&vd, "/lengthSeconds").and_then(|x| x.parse().ok()).unwrap_or(0),
+        length_secs: s(&vd, "/lengthSeconds")
+            .and_then(|x| x.parse().ok())
+            .unwrap_or(0),
         view_count: s(&vd, "/viewCount").and_then(|x| x.parse().ok()),
         description: s(&vd, "/shortDescription").unwrap_or_default(),
         is_live: vd.get("isLive").and_then(Value::as_bool).unwrap_or(false),
         hls_url: s(&sd, "/hlsManifestUrl"),
         ..Default::default()
     };
-    for f in sd.get("adaptiveFormats").and_then(Value::as_array).into_iter().flatten() {
+    for f in sd
+        .get("adaptiveFormats")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if let Some(sf) = parse_format(f) {
             if sf.is_audio {
                 info.audio.push(sf);
@@ -816,7 +1012,12 @@ fn parse_player(r: &Value) -> StreamInfo {
             }
         }
     }
-    for f in sd.get("formats").and_then(Value::as_array).into_iter().flatten() {
+    for f in sd
+        .get("formats")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if let Some(mut sf) = parse_format(f) {
             sf.is_muxed = true;
             info.muxed.push(sf);
@@ -851,7 +1052,12 @@ fn parse_player(r: &Value) -> StreamInfo {
         .and_then(|tracks| {
             let orig_track = tracks
                 .iter()
-                .find(|tr| tr.get("audioTrackId").and_then(Value::as_str).map(|id| id.ends_with(".4")).unwrap_or(false))
+                .find(|tr| {
+                    tr.get("audioTrackId")
+                        .and_then(Value::as_str)
+                        .map(|id| id.ends_with(".4"))
+                        .unwrap_or(false)
+                })
                 .or_else(|| {
                     info.original_language.as_deref().and_then(|orig| {
                         tracks.iter().find(|tr| {
@@ -891,10 +1097,7 @@ pub fn parse_storyboard(spec: &str) -> Option<Storyboard> {
     if f.len() < 8 {
         return None;
     }
-    let url = base
-        .replace("$L", &li.to_string())
-        .replace("$N", f[6])
-        + &format!("&sigh={}", f[7]);
+    let url = base.replace("$L", &li.to_string()).replace("$N", f[6]) + &format!("&sigh={}", f[7]);
     Some(Storyboard {
         url_template: url,
         width: f[0].parse().ok()?,
@@ -907,11 +1110,13 @@ pub fn parse_storyboard(spec: &str) -> Option<Storyboard> {
 }
 
 fn sort_formats(info: &mut StreamInfo) {
-    info.video.sort_by(|a, b| (b.height, b.fps, b.bitrate).cmp(&(a.height, a.fps, a.bitrate)));
+    info.video
+        .sort_by(|a, b| (b.height, b.fps, b.bitrate).cmp(&(a.height, a.fps, a.bitrate)));
     info.audio.sort_by(|a, b| b.bitrate.cmp(&a.bitrate));
 }
 
-static YTDLP_CACHED: parking_lot::Mutex<Option<(String, Option<String>)>> = parking_lot::Mutex::new(None);
+static YTDLP_CACHED: parking_lot::Mutex<Option<(String, Option<String>)>> =
+    parking_lot::Mutex::new(None);
 
 /// Forget where yt-dlp was (or wasn't) found, e.g. after fetching it.
 pub fn reset_ytdlp_cache() {
@@ -937,8 +1142,15 @@ fn find_ytdlp(custom: &str) -> Option<String> {
         candidates.push(custom.to_string());
     }
     // bundled next to the app (installer) or kept in the data folder
-    let exe = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
-    if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+    let exe = if cfg!(windows) {
+        "yt-dlp.exe"
+    } else {
+        "yt-dlp"
+    };
+    if let Some(d) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+    {
         let p = d.join(exe);
         if p.is_file() {
             candidates.push(p.to_string_lossy().into_owned());
@@ -985,7 +1197,10 @@ pub(crate) fn verification_requested(error: &str) -> bool {
 
 fn needs_sign_in(error: &str) -> bool {
     let e = error.to_ascii_lowercase();
-    verification_requested(&e) || e.contains("sign in to") || e.contains("age-restricted") || e.contains("--cookies")
+    verification_requested(&e)
+        || e.contains("sign in to")
+        || e.contains("age-restricted")
+        || e.contains("--cookies")
 }
 
 /// yt-dlp with the browser sign-in's cookies, for videos YouTube only plays to a
@@ -1013,7 +1228,8 @@ fn with_sign_in_fallback(video_id: &str, res: Result<StreamInfo>) -> Result<Stre
 }
 
 fn ytdlp_streams_with(video_id: &str, cookies: Option<&std::path::Path>) -> Result<StreamInfo> {
-    let bin = ytdlp_path().ok_or_else(|| anyhow!("yt-dlp not found (install it or set its path in Settings)"))?;
+    let bin = ytdlp_path()
+        .ok_or_else(|| anyhow!("yt-dlp not found (install it or set its path in Settings)"))?;
     let mut cmd = Command::new(bin);
     // The app chooses its own tracks. Request the inventory even when
     // yt-dlp cannot choose a default download format.
@@ -1033,7 +1249,10 @@ fn ytdlp_streams_with(video_id: &str, cookies: Option<&std::path::Path>) -> Resu
     let result = ytdlp_inventory(video_id, &out);
     if result.is_err() && crate::downloads::retry_with_ios(&String::from_utf8_lossy(&out.stderr)) {
         let mut retry = Command::new(cmd.get_program());
-        retry.args(cmd.get_args()).arg("--extractor-args").arg(crate::downloads::YTDLP_IOS);
+        retry
+            .args(cmd.get_args())
+            .arg("--extractor-args")
+            .arg(crate::downloads::YTDLP_IOS);
         hide_window(&mut retry);
         if let Ok(o) = retry.output() {
             if let Ok(info) = ytdlp_inventory(video_id, &o) {
@@ -1047,13 +1266,18 @@ fn ytdlp_streams_with(video_id: &str, cookies: Option<&std::path::Path>) -> Resu
 fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamInfo> {
     let stderr = String::from_utf8_lossy(&out.stderr);
     if !out.status.success() {
-        return Err(anyhow!("{}", stderr.lines().last().unwrap_or("yt-dlp failed")));
+        return Err(anyhow!(
+            "{}",
+            stderr.lines().last().unwrap_or("yt-dlp failed")
+        ));
     }
     let v: Value = serde_json::from_slice(&out.stdout)?;
     let mut info = StreamInfo {
         id: video_id.to_string(),
         title: s(&v, "/title").unwrap_or_default(),
-        author: s(&v, "/channel").or_else(|| s(&v, "/uploader")).unwrap_or_default(),
+        author: s(&v, "/channel")
+            .or_else(|| s(&v, "/uploader"))
+            .unwrap_or_default(),
         channel_id: s(&v, "/channel_id").unwrap_or_default(),
         length_secs: v.get("duration").and_then(Value::as_f64).unwrap_or(0.0) as u64,
         view_count: v.get("view_count").and_then(Value::as_u64),
@@ -1062,12 +1286,19 @@ fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamI
         source: "yt-dlp",
         ..Default::default()
     };
-    for f in v.get("formats").and_then(Value::as_array).into_iter().flatten() {
+    for f in v
+        .get("formats")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let Some(url) = s(f, "/url") else { continue };
         let proto = s(f, "/protocol").unwrap_or_default();
         let vcodec = s(f, "/vcodec").unwrap_or_else(|| "none".into());
         let acodec = s(f, "/acodec").unwrap_or_else(|| "none".into());
-        if (vcodec == "none" && acodec == "none") || f.get("has_drm").and_then(Value::as_bool) == Some(true) {
+        if (vcodec == "none" && acodec == "none")
+            || f.get("has_drm").and_then(Value::as_bool) == Some(true)
+        {
             continue;
         }
         if proto.contains("m3u8") {
@@ -1081,17 +1312,35 @@ fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamI
         }
         let height = f.get("height").and_then(Value::as_u64).unwrap_or(0) as u32;
         let sf = StreamFormat {
-            itag: s(f, "/format_id").and_then(|x| x.split('-').next().and_then(|n| n.parse().ok())).unwrap_or(0),
+            itag: s(f, "/format_id")
+                .and_then(|x| x.split('-').next().and_then(|n| n.parse().ok()))
+                .unwrap_or(0),
             url,
-            mime: format!("{}/{}", if vcodec == "none" { "audio" } else { "video" }, s(f, "/ext").unwrap_or_default()),
-            codecs: if vcodec == "none" { acodec.clone() } else { vcodec.clone() },
+            mime: format!(
+                "{}/{}",
+                if vcodec == "none" { "audio" } else { "video" },
+                s(f, "/ext").unwrap_or_default()
+            ),
+            codecs: if vcodec == "none" {
+                acodec.clone()
+            } else {
+                vcodec.clone()
+            },
             bitrate: (f.get("tbr").and_then(Value::as_f64).unwrap_or(0.0) * 1000.0) as u64,
             width: f.get("width").and_then(Value::as_u64).unwrap_or(0) as u32,
             height,
             fps: f.get("fps").and_then(Value::as_f64).unwrap_or(0.0) as u32,
-            quality_label: if height > 0 { format!("{height}p") } else { String::new() },
+            quality_label: if height > 0 {
+                format!("{height}p")
+            } else {
+                String::new()
+            },
             audio_language: s(f, "/language"),
-            audio_default: f.get("language_preference").and_then(Value::as_i64).unwrap_or(0) >= 0,
+            audio_default: f
+                .get("language_preference")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                >= 0,
             content_length: f.get("filesize").and_then(Value::as_u64),
             is_audio: vcodec == "none",
             is_muxed: vcodec != "none" && acodec != "none",
@@ -1104,7 +1353,11 @@ fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamI
             info.video.push(sf);
         }
     }
-    if info.video.is_empty() && info.muxed.is_empty() && info.audio.is_empty() && info.hls_url.is_none() {
+    if info.video.is_empty()
+        && info.muxed.is_empty()
+        && info.audio.is_empty()
+        && info.hls_url.is_none()
+    {
         if let Some(reason) = stderr.lines().rev().find(|line| needs_sign_in(line)) {
             return Err(anyhow!("{reason}"));
         }
@@ -1113,7 +1366,10 @@ fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamI
     for (tracks, auto) in [(&v["subtitles"], false), (&v["automatic_captions"], true)] {
         if let Some(m) = tracks.as_object() {
             for (code, list) in m {
-                if let Some(vtt) = list.as_array().and_then(|a| a.iter().find(|x| s(x, "/ext").as_deref() == Some("vtt"))) {
+                if let Some(vtt) = list
+                    .as_array()
+                    .and_then(|a| a.iter().find(|x| s(x, "/ext").as_deref() == Some("vtt")))
+                {
                     // Keep actual tracks, including multiple ASR languages. A timedtext
                     // URL with tlang requests an on-demand translation of another track.
                     let url = s(vtt, "/url").unwrap_or_default();
@@ -1127,7 +1383,10 @@ fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamI
                         lang: code.clone(),
                         name: s(vtt, "/name").unwrap_or(code.clone()),
                         url,
-                        json3_url: list.as_array().and_then(|items| items.iter().find(|item| item["ext"] == "json3")).and_then(|item| s(item, "/url")),
+                        json3_url: list
+                            .as_array()
+                            .and_then(|items| items.iter().find(|item| item["ext"] == "json3"))
+                            .and_then(|item| s(item, "/url")),
                         auto,
                     });
                 }
@@ -1137,18 +1396,20 @@ fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamI
     info.original_language = s(&v, "/language")
         .and_then(|l| clean_lang(&l))
         .or_else(|| {
-            v.get("formats")
-                .and_then(Value::as_array)
-                .and_then(|fmts| {
-                    fmts.iter()
-                        .filter(|f| {
-                            s(f, "/vcodec").as_deref() == Some("none")
-                                && s(f, "/language").and_then(|l| clean_lang(&l)).is_some()
-                        })
-                        .max_by_key(|f| f.get("language_preference").and_then(Value::as_i64).unwrap_or(i64::MIN))
-                        .and_then(|f| s(f, "/language"))
-                        .and_then(|l| clean_lang(&l))
-                })
+            v.get("formats").and_then(Value::as_array).and_then(|fmts| {
+                fmts.iter()
+                    .filter(|f| {
+                        s(f, "/vcodec").as_deref() == Some("none")
+                            && s(f, "/language").and_then(|l| clean_lang(&l)).is_some()
+                    })
+                    .max_by_key(|f| {
+                        f.get("language_preference")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(i64::MIN)
+                    })
+                    .and_then(|f| s(f, "/language"))
+                    .and_then(|l| clean_lang(&l))
+            })
         })
         .or_else(|| {
             info.captions
@@ -1166,8 +1427,16 @@ fn ytdlp_inventory(video_id: &str, out: &std::process::Output) -> Result<StreamI
 pub fn quality_class(width: u32, height: u32) -> u32 {
     const LADDER: [u32; 9] = [144, 240, 360, 480, 720, 1080, 1440, 2160, 4320];
     let (short, long) = (width.min(height), width.max(height));
-    let eq = if width == 0 { height } else { short.max(long * 9 / 16) };
-    LADDER.iter().copied().min_by_key(|l| (*l as i64 - eq as i64).abs()).unwrap_or(eq)
+    let eq = if width == 0 {
+        height
+    } else {
+        short.max(long * 9 / 16)
+    };
+    LADDER
+        .iter()
+        .copied()
+        .min_by_key(|l| (*l as i64 - eq as i64).abs())
+        .unwrap_or(eq)
 }
 
 pub fn fmt_class(f: &StreamFormat) -> u32 {
@@ -1175,7 +1444,11 @@ pub fn fmt_class(f: &StreamFormat) -> u32 {
 }
 
 pub fn is_avc(codecs: &str) -> bool {
-    codecs.to_ascii_lowercase().split(',').map(str::trim).any(|c| c.starts_with("avc1") || c.starts_with("avc3") || c == "h264")
+    codecs
+        .to_ascii_lowercase()
+        .split(',')
+        .map(str::trim)
+        .any(|c| c.starts_with("avc1") || c.starts_with("avc3") || c == "h264")
 }
 
 /// Whether a codecs string (one codec or an HLS `CODECS` list) is HDR video:
@@ -1183,7 +1456,9 @@ pub fn is_avc(codecs: &str) -> bool {
 /// render path converts them to RGB without tone mapping, so SDR is preferred.
 pub fn is_hdr_codecs(codecs: &str) -> bool {
     codecs.to_lowercase().split(',').map(str::trim).any(|c| {
-        c.starts_with("vp9.2") || c.starts_with("vp09.02") || (c.starts_with("av01") && c.split('.').nth(3) == Some("10"))
+        c.starts_with("vp9.2")
+            || c.starts_with("vp09.02")
+            || (c.starts_with("av01") && c.split('.').nth(3) == Some("10"))
     })
 }
 
@@ -1195,7 +1470,13 @@ pub fn pick_formats<'a>(
 ) -> (Option<&'a StreamFormat>, Option<&'a StreamFormat>) {
     let codec_rank = |f: &StreamFormat| -> u32 {
         let c = f.codecs.to_lowercase();
-        let kind = if c.starts_with("av01") { "av1" } else if c.starts_with("vp9") || c.starts_with("vp09") { "vp9" } else { "h264" };
+        let kind = if c.starts_with("av01") {
+            "av1"
+        } else if c.starts_with("vp9") || c.starts_with("vp09") {
+            "vp9"
+        } else {
+            "h264"
+        };
         match (codec_pref, kind) {
             ("av1", "av1") | ("vp9", "vp9") | ("h264", "h264") => 3,
             (_, "vp9") => 2,
@@ -1211,20 +1492,52 @@ pub fn pick_formats<'a>(
         .video
         .iter()
         .filter(|f| max_height == 0 || fmt_class(f) <= max_height)
-        .max_by_key(|f| if enhanced { (fmt_class(f), sdr(f), f.fps, f.bitrate as u32 / 1000, codec_rank(f)) } else { (fmt_class(f), sdr(f), f.fps, codec_rank(f), f.bitrate as u32 / 1000) })
+        .max_by_key(|f| {
+            if enhanced {
+                (
+                    fmt_class(f),
+                    sdr(f),
+                    f.fps,
+                    f.bitrate as u32 / 1000,
+                    codec_rank(f),
+                )
+            } else {
+                (
+                    fmt_class(f),
+                    sdr(f),
+                    f.fps,
+                    codec_rank(f),
+                    f.bitrate as u32 / 1000,
+                )
+            }
+        })
         .or_else(|| info.video.iter().min_by_key(|f| fmt_class(f)));
     let audio = {
         let mut cands: Vec<&StreamFormat> = info.audio.iter().collect();
         if let Some(lang) = audio_lang {
-            let l: Vec<&StreamFormat> = cands.iter().copied().filter(|a| a.audio_language.as_deref() == Some(lang)).collect();
+            let l: Vec<&StreamFormat> = cands
+                .iter()
+                .copied()
+                .filter(|a| a.audio_language.as_deref() == Some(lang))
+                .collect();
             if !l.is_empty() {
                 cands = l;
             }
         } else if !st.original_audio
-            && cands.iter().any(|a| a.audio_language.as_deref().map(|l| l.starts_with(&st.language)).unwrap_or(false))
+            && cands.iter().any(|a| {
+                a.audio_language
+                    .as_deref()
+                    .map(|l| l.starts_with(&st.language))
+                    .unwrap_or(false)
+            })
         {
             // dubbed track in the interface language when the original isn't forced
-            cands.retain(|a| a.audio_language.as_deref().map(|l| l.starts_with(&st.language)).unwrap_or(false));
+            cands.retain(|a| {
+                a.audio_language
+                    .as_deref()
+                    .map(|l| l.starts_with(&st.language))
+                    .unwrap_or(false)
+            });
         } else {
             let d: Vec<&StreamFormat> = cands.iter().copied().filter(|a| a.audio_default).collect();
             if !d.is_empty() {
@@ -1232,7 +1545,9 @@ pub fn pick_formats<'a>(
             }
         }
         // prefer opus, then highest bitrate
-        cands.into_iter().max_by_key(|a| (a.codecs.contains("opus") as u8, a.bitrate))
+        cands
+            .into_iter()
+            .max_by_key(|a| (a.codecs.contains("opus") as u8, a.bitrate))
     };
     (video, audio)
 }
@@ -1257,11 +1572,23 @@ pub fn playback_stream<'a>(
     }
     let (video, audio) = pick_formats(info, quality, codec, language);
     let best_variant = |formats: &'a [StreamFormat]| {
-        formats.iter()
+        formats
+            .iter()
             .filter(|f| quality == 0 || fmt_class(f) <= quality)
-            .max_by_key(|f| (prefer_avc && is_avc(&f.codecs), fmt_class(f), f.fps, f.bitrate))
+            .max_by_key(|f| {
+                (
+                    prefer_avc && is_avc(&f.codecs),
+                    fmt_class(f),
+                    f.fps,
+                    f.bitrate,
+                )
+            })
     };
-    let video = if prefer_avc { best_variant(&info.video).or(video) } else { video };
+    let video = if prefer_avc {
+        best_variant(&info.video).or(video)
+    } else {
+        video
+    };
     let video = video.filter(|_| !audio_only);
     if video.is_none() && (!audio_only || audio.is_none()) {
         // Some responses have separate audio and muxed video, with no video-only track.
@@ -1273,10 +1600,15 @@ pub fn playback_stream<'a>(
 }
 
 /// Builds a URL mpv can play: EDL combining separate video & audio streams.
-pub fn mpv_source(video: Option<&StreamFormat>, audio: Option<&StreamFormat>, duration: u64) -> Option<String> {
+pub fn mpv_source(
+    video: Option<&StreamFormat>,
+    audio: Option<&StreamFormat>,
+    duration: u64,
+) -> Option<String> {
     let _ = duration;
     let edl_part = |u: &str| format!("%{}%{}", u.len(), u);
-    let local = |f: &StreamFormat| crate::player::proxy::local_url(&f.url, f.content_length, &f.mime);
+    let local =
+        |f: &StreamFormat| crate::player::proxy::local_url(&f.url, f.content_length, &f.mime);
     match (video, audio) {
         (Some(v), Some(a)) => Some(format!(
             "edl://!no_clip;!no_chapters;{};!new_stream;!no_clip;!no_chapters;{}",
@@ -1300,10 +1632,25 @@ mod tests {
             println!("android_vr error: {e}");
         }
         let s = get_streams(&id).unwrap();
-        println!("heights: {:?}", s.video.iter().map(|v| v.height).collect::<Vec<_>>());
-        println!("{} via {} v={} a={} subs={} sb={:?}", s.title, s.source, s.video.len(), s.audio.len(), s.captions.len(), s.storyboard);
+        println!(
+            "heights: {:?}",
+            s.video.iter().map(|v| v.height).collect::<Vec<_>>()
+        );
+        println!(
+            "{} via {} v={} a={} subs={} sb={:?}",
+            s.title,
+            s.source,
+            s.video.len(),
+            s.audio.len(),
+            s.captions.len(),
+            s.storyboard
+        );
         let (v, a) = pick_formats(&s, 1080, "vp9", None);
-        println!("{:?} {:?}", v.map(|v| (&v.quality_label, &v.codecs)), a.map(|a| &a.codecs));
+        println!(
+            "{:?} {:?}",
+            v.map(|v| (&v.quality_label, &v.codecs)),
+            a.map(|a| &a.codecs)
+        );
         // HLS sources carry their audio in the manifest
         assert!(v.is_some() && (a.is_some() || s.hls_only));
         // direct URLs must actually serve data (a TV URL with an unsolved challenge gets 403)
@@ -1317,10 +1664,22 @@ mod tests {
     #[test]
     fn hdr_codecs() {
         // yt-dlp names, Innertube/HLS names and HLS lists with audio
-        for hdr in ["vp9.2", "vp09.02.51.10.01.09.18.09.00", "av01.0.08M.10.0.110.09.18.09.0", "vp09.02.40.10.01.09.18.09.00,mp4a.40.2"] {
+        for hdr in [
+            "vp9.2",
+            "vp09.02.51.10.01.09.18.09.00",
+            "av01.0.08M.10.0.110.09.18.09.0",
+            "vp09.02.40.10.01.09.18.09.00,mp4a.40.2",
+        ] {
             assert!(is_hdr_codecs(hdr), "{hdr}");
         }
-        for sdr in ["vp9", "vp09.00.40.08", "av01.0.08M.08", "avc1.640028", "avc1.4D401F,mp4a.40.2", ""] {
+        for sdr in [
+            "vp9",
+            "vp09.00.40.08",
+            "av01.0.08M.08",
+            "avc1.640028",
+            "avc1.4D401F,mp4a.40.2",
+            "",
+        ] {
             assert!(!is_hdr_codecs(sdr), "{sdr}");
         }
     }
@@ -1336,7 +1695,13 @@ mod sb_tests {
         let sb = s.storyboard.expect("no storyboard");
         let (url, c, r) = sb.frame_at(60.0, s.length_secs as f64).unwrap();
         println!("{url} {c} {r}");
-        let (st, b) = match crate::api::http::get_bytes(&url, &[]) { Ok(b) => (200, b.len()), Err(e) => { println!("{e}"); (0, 0) } };
+        let (st, b) = match crate::api::http::get_bytes(&url, &[]) {
+            Ok(b) => (200, b.len()),
+            Err(e) => {
+                println!("{e}");
+                (0, 0)
+            }
+        };
         println!("status {st} bytes {b}");
         assert!(b > 1000);
     }
@@ -1350,12 +1715,43 @@ mod ua_tests {
     fn live_audio_formats() {
         let id = std::env::var("VID").unwrap_or_else(|_| "q0aFOxT6TNw".into());
         let s = android_vr(&id).unwrap();
-        let agent = ureq::Agent::config_builder().http_status_as_error(false).build().new_agent();
-        for (a, rg) in s.audio.iter().flat_map(|a| ["bytes=0-1000", "bytes=0-524287", "bytes=0-1048575", "bytes=1048576-2097151"].into_iter().map(move |r| (a, r))) {
-            let r = agent.get(&a.url).header("User-Agent", http::BROWSER_UA).header("Range", rg).call().unwrap();
+        let agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .new_agent();
+        for (a, rg) in s.audio.iter().flat_map(|a| {
+            [
+                "bytes=0-1000",
+                "bytes=0-524287",
+                "bytes=0-1048575",
+                "bytes=1048576-2097151",
+            ]
+            .into_iter()
+            .map(move |r| (a, r))
+        }) {
+            let r = agent
+                .get(&a.url)
+                .header("User-Agent", http::BROWSER_UA)
+                .header("Range", rg)
+                .call()
+                .unwrap();
             print!("{rg} ");
-            let itag = a.url.split("itag=").nth(1).and_then(|x| x.split('&').next()).unwrap_or("?");
-            println!("itag {itag} {} {} br={} default={} lang={:?} drc={} -> {}", a.mime, a.codecs, a.bitrate, a.audio_default, a.audio_language, a.url.contains("drc"), r.status());
+            let itag = a
+                .url
+                .split("itag=")
+                .nth(1)
+                .and_then(|x| x.split('&').next())
+                .unwrap_or("?");
+            println!(
+                "itag {itag} {} {} br={} default={} lang={:?} drc={} -> {}",
+                a.mime,
+                a.codecs,
+                a.bitrate,
+                a.audio_default,
+                a.audio_language,
+                a.url.contains("drc"),
+                r.status()
+            );
         }
     }
 
@@ -1365,17 +1761,40 @@ mod ua_tests {
         let id = std::env::var("VID").unwrap_or_else(|_| "q0aFOxT6TNw".into());
         let s = android_vr(&id).unwrap();
         let (v, a) = pick_formats(&s, 1080, "vp9", None);
-        let urls = vec![v.unwrap().url.clone(), a.unwrap().url.clone(), v.unwrap().url.clone()];
-        let hs: Vec<_> = urls.into_iter().enumerate().map(|(k, u)| std::thread::spawn(move || {
-            let agent = ureq::Agent::config_builder().http_status_as_error(false).build().new_agent();
-            for i in 0..3u64 {
-                let r = agent.get(&u).header("User-Agent", http::BROWSER_UA).header("Range", &format!("bytes={}-{}", i * 1048576, i * 1048576 + 1048575)).call().unwrap();
-                let st = r.status();
-                let _ = r.into_body().with_config().limit(u64::MAX).read_to_vec();
-                println!("stream{k} #{i}: {st}");
-            }
-        })).collect();
-        for h in hs { h.join().unwrap(); }
+        let urls = vec![
+            v.unwrap().url.clone(),
+            a.unwrap().url.clone(),
+            v.unwrap().url.clone(),
+        ];
+        let hs: Vec<_> = urls
+            .into_iter()
+            .enumerate()
+            .map(|(k, u)| {
+                std::thread::spawn(move || {
+                    let agent = ureq::Agent::config_builder()
+                        .http_status_as_error(false)
+                        .build()
+                        .new_agent();
+                    for i in 0..3u64 {
+                        let r = agent
+                            .get(&u)
+                            .header("User-Agent", http::BROWSER_UA)
+                            .header(
+                                "Range",
+                                &format!("bytes={}-{}", i * 1048576, i * 1048576 + 1048575),
+                            )
+                            .call()
+                            .unwrap();
+                        let st = r.status();
+                        let _ = r.into_body().with_config().limit(u64::MAX).read_to_vec();
+                        println!("stream{k} #{i}: {st}");
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
     }
 
     #[test]
@@ -1388,9 +1807,20 @@ mod ua_tests {
         for (name, ua) in [("browser", http::BROWSER_UA), ("vr", VR_UA)] {
             let s = android_vr(&id).unwrap();
             let f = &s.video[0];
-            let agent = ureq::Agent::config_builder().http_status_as_error(false).build().new_agent();
+            let agent = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build()
+                .new_agent();
             for i in 0..4u64 {
-                let r = agent.get(&f.url).header("User-Agent", ua).header("Range", &format!("bytes={}-{}", i * 1048576, i * 1048576 + 1048575)).call().unwrap();
+                let r = agent
+                    .get(&f.url)
+                    .header("User-Agent", ua)
+                    .header(
+                        "Range",
+                        &format!("bytes={}-{}", i * 1048576, i * 1048576 + 1048575),
+                    )
+                    .call()
+                    .unwrap();
                 let st = r.status();
                 let _ = r.into_body().read_to_vec();
                 println!("{name} #{i}: {st}");
@@ -1399,7 +1829,6 @@ mod ua_tests {
     }
 }
 
-
 #[cfg(test)]
 mod kids_tests {
     /// A video made for kids (YouTube Kids) resolves and its HLS segments download.
@@ -1407,12 +1836,20 @@ mod kids_tests {
     #[ignore]
     fn live_made_for_kids() {
         let info = super::resolve("e_04ZrNroTo").unwrap();
-        println!("source={} variants={} hls={}", info.source, info.video.len(), info.hls_url.is_some());
+        println!(
+            "source={} variants={} hls={}",
+            info.source,
+            info.video.len(),
+            info.hls_url.is_some()
+        );
         assert!(info.hls_only && !info.video.is_empty());
         let best = info.video.iter().max_by_key(|f| f.height).unwrap();
         assert!(best.height >= 720, "{}", best.height);
         let pl = super::http::get_text(&best.url).unwrap();
-        let seg = pl.lines().find(|l| !l.is_empty() && !l.starts_with('#')).unwrap();
+        let seg = pl
+            .lines()
+            .find(|l| !l.is_empty() && !l.starts_with('#'))
+            .unwrap();
         let bytes = super::http::get_bytes(seg, &[]).unwrap();
         println!("first segment {} bytes", bytes.len());
         assert!(bytes.len() > 100_000);
@@ -1435,8 +1872,13 @@ mod playability_tests {
                 "reason": "Войдите в аккаунт, чтобы подтвердить, что вы не бот"
             }
         });
-        let err = playability_error(&ru, Some("visionOS")).unwrap().to_string();
-        assert!(err.contains("Войдите в аккаунт"), "keeps localized reason: {err}");
+        let err = playability_error(&ru, Some("visionOS"))
+            .unwrap()
+            .to_string();
+        assert!(
+            err.contains("Войдите в аккаунт"),
+            "keeps localized reason: {err}"
+        );
         assert!(needs_sign_in(&err), "must match LOGIN_REQUIRED: {err}");
 
         let age = json!({

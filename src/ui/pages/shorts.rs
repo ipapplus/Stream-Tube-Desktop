@@ -1,14 +1,15 @@
 use crate::api::innertube::{self, SearchFilter};
-use crate::i18n::t;
 use crate::api::json::compact_number;
 use crate::api::services;
 use crate::api::types::*;
+use crate::i18n::{self, t};
+use crate::metrics::{self, MetricKind};
 use crate::player::controller::{Player, PlayerEvent, player};
 use crate::store;
 use crate::ui::app::{Route, UiState, navigate};
-use crate::ui::*;
 use crate::ui::pages::watch::{reply_count_label, reply_parents, thread_branch};
 use crate::ui::widgets::{Load, comment_body, has_text_selection, selectable_text};
+use crate::ui::*;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -54,8 +55,17 @@ impl ShortsPage {
         let playback = player(cx);
         let sub = cx.subscribe(&playback, |this: &mut Self, pl, ev: &PlayerEvent, cx| {
             if matches!(ev, PlayerEvent::Loaded) {
-                if let Some(short) = this.list.get_mut(this.idx).filter(|v| v.title.trim().is_empty()) {
-                    if let Some(video) = pl.read(cx).video.as_ref().filter(|v| v.id == short.id && !v.title.trim().is_empty()) {
+                if let Some(short) = this
+                    .list
+                    .get_mut(this.idx)
+                    .filter(|v| v.title.trim().is_empty())
+                {
+                    if let Some(video) = pl
+                        .read(cx)
+                        .video
+                        .as_ref()
+                        .filter(|v| v.id == short.id && !v.title.trim().is_empty())
+                    {
                         short.title.clone_from(&video.title);
                         cx.notify();
                     }
@@ -65,7 +75,12 @@ impl ShortsPage {
                 cx.notify();
             }
             if matches!(ev, PlayerEvent::Ended) && store::settings_snapshot().shorts_autoadvance {
-                if this.list.get(this.idx).zip(pl.read(cx).video.as_ref()).is_some_and(|(short, playing)| short.id == playing.id) {
+                if this
+                    .list
+                    .get(this.idx)
+                    .zip(pl.read(cx).video.as_ref())
+                    .is_some_and(|(short, playing)| short.id == playing.id)
+                {
                     this.step(1, cx);
                 }
             }
@@ -106,7 +121,12 @@ impl ShortsPage {
                     v.is_short = true;
                     v
                 }
-                _ => VideoItem { id: id.clone(), is_short: true, thumbnail: innertube::default_thumb(id), ..Default::default() },
+                _ => VideoItem {
+                    id: id.clone(),
+                    is_short: true,
+                    thumbnail: innertube::default_thumb(id),
+                    ..Default::default()
+                },
             };
             s.list.push(item);
             Some(id.clone())
@@ -122,9 +142,18 @@ impl ShortsPage {
             let res = blocking(move || {
                 // YouTube's own Shorts sequence: follow on from the opened/playing Short when present,
                 // otherwise the account's recommendations or the last Short watched
-                let seed = initial_id.or_else(|| crate::store::history_list("", 60).into_iter().find(|h| h.video.is_short).map(|h| h.video.id));
-                let seeded = seed.as_deref().and_then(|s| innertube::shorts_feed(None, Some(s)).ok());
-                let feed = seeded.filter(|(i, _)| !i.is_empty()).or_else(|| innertube::shorts_feed(None, None).ok());
+                let seed = initial_id.or_else(|| {
+                    crate::store::history_list("", 60)
+                        .into_iter()
+                        .find(|h| h.video.is_short)
+                        .map(|h| h.video.id)
+                });
+                let seeded = seed
+                    .as_deref()
+                    .and_then(|s| innertube::shorts_feed(None, Some(s)).ok());
+                let feed = seeded
+                    .filter(|(i, _)| !i.is_empty())
+                    .or_else(|| innertube::shorts_feed(None, None).ok());
                 if let Some((items, cont)) = feed {
                     if !items.is_empty() {
                         return (items, cont, true);
@@ -132,8 +161,13 @@ impl ShortsPage {
                 }
                 // fallback: subscription shorts, then a shorts search
                 let (feed, _) = crate::feed::cached_feed(None);
-                let mut out: Vec<VideoItem> = feed.into_iter().filter(|v| v.is_short).take(30).collect();
-                let f = SearchFilter { duration: 1, kind: 1, ..Default::default() };
+                let mut out: Vec<VideoItem> =
+                    feed.into_iter().filter(|v| v.is_short).take(30).collect();
+                let f = SearchFilter {
+                    duration: 1,
+                    kind: 1,
+                    ..Default::default()
+                };
                 let mut cont = None;
                 if let Ok(p) = innertube::search("#shorts", &f) {
                     cont = p.continuation;
@@ -151,9 +185,17 @@ impl ShortsPage {
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 let s = store::settings_snapshot();
-                let mut seen: std::collections::HashSet<String> = this.list.iter().map(|v| v.id.clone()).collect();
+                let mut seen: std::collections::HashSet<String> =
+                    this.list.iter().map(|v| v.id.clone()).collect();
                 for v in res.0 {
-                    if !store::is_filtered(&VideoItem { is_short: false, ..v.clone() }, &s) && seen.insert(v.id.clone()) {
+                    if !store::is_filtered(
+                        &VideoItem {
+                            is_short: false,
+                            ..v.clone()
+                        },
+                        &s,
+                    ) && seen.insert(v.id.clone())
+                    {
                         this.list.push(v);
                     }
                 }
@@ -169,7 +211,9 @@ impl ShortsPage {
 
     fn play_current(&mut self, cx: &mut Context<Self>) {
         self.initial_play = false;
-        let Some(mut v) = self.list.get(self.idx).cloned() else { return };
+        let Some(mut v) = self.list.get(self.idx).cloned() else {
+            return;
+        };
         v.is_short = true;
         let pl = self.player.clone();
         pl.update(cx, |p, cx| {
@@ -237,7 +281,15 @@ impl ShortsPage {
                             t.continuation = cont;
                             let settings = store::settings_snapshot();
                             for v in items {
-                                if !t.list.iter().any(|x| x.id == v.id) && !store::is_filtered(&VideoItem { is_short: false, ..v.clone() }, &settings) {
+                                if !t.list.iter().any(|x| x.id == v.id)
+                                    && !store::is_filtered(
+                                        &VideoItem {
+                                            is_short: false,
+                                            ..v.clone()
+                                        },
+                                        &settings,
+                                    )
+                                {
                                     t.list.push(v);
                                 }
                             }
@@ -254,7 +306,13 @@ impl ShortsPage {
         if self.meta.contains_key(&id) {
             return;
         }
-        self.meta.insert(id.clone(), WatchInfo { id: id.clone(), ..Default::default() });
+        self.meta.insert(
+            id.clone(),
+            WatchInfo {
+                id: id.clone(),
+                ..Default::default()
+            },
+        );
         cx.spawn(async move |this, cx| {
             let id2 = id.clone();
             let res = blocking(move || innertube::watch_next(&id2, None)).await;
@@ -294,7 +352,9 @@ impl ShortsPage {
 
     /// Loads comments for the current Short into the side panel.
     fn open_comments(&mut self, cx: &mut Context<Self>) {
-        let Some(v) = self.list.get(self.idx) else { return };
+        let Some(v) = self.list.get(self.idx) else {
+            return;
+        };
         let id = v.id.clone();
         self.show_comments = true;
         if self.comments_for == id && self.comments.is_some() {
@@ -306,8 +366,16 @@ impl ShortsPage {
         let token = self.meta.get(&id).and_then(|w| w.comments_token.clone());
         let Some(token) = token else {
             // still waiting for the watch info, or comments are off
-            let pending = self.meta.get(&id).map(|w| w.title.is_empty()).unwrap_or(true);
-            self.comments = if pending { None } else { Some(Load::Error("Comments are turned off.".into())) };
+            let pending = self
+                .meta
+                .get(&id)
+                .map(|w| w.title.is_empty())
+                .unwrap_or(true);
+            self.comments = if pending {
+                None
+            } else {
+                Some(Load::Error("Comments are turned off.".into()))
+            };
             cx.notify();
             return;
         };
@@ -316,7 +384,11 @@ impl ShortsPage {
             let res = blocking(move || innertube::comments(&token)).await;
             let _ = this.update(cx, |t, cx| {
                 if t.comments_for == id {
-                    let sort = t.meta.get(&id).map(|w| w.comments_sort.clone()).unwrap_or_default();
+                    let sort = t
+                        .meta
+                        .get(&id)
+                        .map(|w| w.comments_sort.clone())
+                        .unwrap_or_default();
                     t.comments = Some(match res {
                         Ok(mut p) => {
                             if p.sort_top_token.is_none() && p.sort_new_token.is_none() {
@@ -353,7 +425,11 @@ impl ShortsPage {
                 match (res, append) {
                     (Ok(mut p), false) => {
                         if p.sort_top_token.is_none() && p.sort_new_token.is_none() {
-                            (p.sort_top_token, p.sort_new_token) = t.meta.get(&id).map(|w| w.comments_sort.clone()).unwrap_or_default();
+                            (p.sort_top_token, p.sort_new_token) = t
+                                .meta
+                                .get(&id)
+                                .map(|w| w.comments_sort.clone())
+                                .unwrap_or_default();
                         }
                         t.comments = Some(Load::Ready(p))
                     }
@@ -395,7 +471,8 @@ impl ShortsPage {
                             list.extend(p.comments);
                             *cont = p.continuation;
                         } else {
-                            t.replies.insert(comment_id, Load::Ready((p.comments, p.continuation)));
+                            t.replies
+                                .insert(comment_id, Load::Ready((p.comments, p.continuation)));
                         }
                     }
                     Err(e) => {
@@ -410,52 +487,87 @@ impl ShortsPage {
     }
 
     /// A reply and, hanging under it, the replies that answer it.
-    fn reply_subtree(&mut self, list: &[Comment], parents: &[Option<usize>], i: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn reply_subtree(
+        &mut self,
+        list: &[Comment],
+        parents: &[Option<usize>],
+        i: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = pal(cx);
-        let kids: Vec<usize> = (i + 1..list.len()).filter(|&j| parents[j] == Some(i)).collect();
+        let kids: Vec<usize> = (i + 1..list.len())
+            .filter(|&j| parents[j] == Some(i))
+            .collect();
         let me = self.comment_row(&list[i], true, !kids.is_empty(), cx);
         if kids.is_empty() {
             return me;
         }
         let mut col = div().flex().flex_col().child(me);
         for (k, &j) in kids.iter().enumerate() {
-            col = col.child(thread_branch(self.reply_subtree(list, parents, j, cx), k + 1 == kids.len(), 24., p.border));
+            col = col.child(thread_branch(
+                self.reply_subtree(list, parents, j, cx),
+                k + 1 == kids.len(),
+                24.,
+                p.border,
+                cx,
+            ));
         }
         col.into_any_element()
     }
 
     /// One comment; an opened one has its replies hanging under it on a thread line.
-    fn comment_row(&mut self, c: &Comment, is_reply: bool, thread: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn comment_row(
+        &mut self,
+        c: &Comment,
+        is_reply: bool,
+        thread: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = pal(cx);
         let cid = c.id.clone();
         let open = self.replies.contains_key(&c.id);
         let size = if is_reply { 24. } else { 32. };
         let a = avatar(c.author_avatar.as_deref(), px(size), &c.author, cx).into_any_element();
         let a = if thread || (!is_reply && open) {
-            div().flex().flex_col().items_center().flex_none().child(a).child(div().flex_1().w(px(2.)).mt_1().bg(p.border)).into_any_element()
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .flex_none()
+                .child(a)
+                .child(div().flex_1().w(px(2.)).mt_1().bg(p.border))
+                .into_any_element()
         } else {
             a
         };
-        let toggle = c.replies_token.clone().filter(|_| !is_reply && !c.reply_count.is_empty() && c.reply_count != "0").map(|tok| {
-            let cid2 = cid.clone();
-            div()
-                .id(SharedString::from(format!("scr-btn-{}", c.id)))
-                .flex()
-                .items_center()
-                .gap_1()
-                .text_color(p.link)
-                .font_weight(FontWeight::MEDIUM)
-                .cursor_pointer()
-                .child(icon(if open { "chevron-up" } else { "chevron-down" }).size_4().text_color(p.link))
-                .child(reply_count_label(&c.reply_count))
-                .on_click(cx.listener(move |t, _, _, cx| {
-                    if t.replies.remove(&cid2).is_some() {
-                        cx.notify();
-                    } else {
-                        t.load_replies(cid2.clone(), tok.clone(), cx);
-                    }
-                }))
-        });
+        let toggle = c
+            .replies_token
+            .clone()
+            .filter(|_| !is_reply && !c.reply_count.is_empty() && c.reply_count != "0")
+            .map(|tok| {
+                let cid2 = cid.clone();
+                div()
+                    .id(SharedString::from(format!("scr-btn-{}", c.id)))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_color(p.link)
+                    .font_weight(FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .child(
+                        icon(if open { "chevron-up" } else { "chevron-down" })
+                            .size_4()
+                            .text_color(p.link),
+                    )
+                    .child(reply_count_label(&c.reply_count))
+                    .on_click(cx.listener(move |t, _, _, cx| {
+                        if t.replies.remove(&cid2).is_some() {
+                            cx.notify();
+                        } else {
+                            t.load_replies(cid2.clone(), tok.clone(), cx);
+                        }
+                    }))
+            });
         let el = div()
             .flex()
             .gap_3()
@@ -473,10 +585,19 @@ impl ShortsPage {
                             .items_center()
                             .gap_2()
                             .text_xs()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(c.author.clone()))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(p.text)
+                                    .child(c.author.clone()),
+                            )
                             .child(div().text_color(p.text2).child(c.published.clone())),
                     )
-                    .child(div().text_sm().text_color(p.text).child(comment_body(format!("sct-{}", c.id), c, cx)))
+                    .child(div().text_sm().text_color(p.text).child(comment_body(
+                        format!("sct-{}", c.id),
+                        c,
+                        cx,
+                    )))
                     .child(
                         div()
                             .flex()
@@ -484,13 +605,30 @@ impl ShortsPage {
                             .gap_3()
                             .text_xs()
                             .text_color(p.text2)
-                            .child(div().flex().items_center().gap_1().child(icon("thumbs-up").size_4().text_color(p.text2)).child(c.likes.clone()))
-                            .when(c.hearted, |d| d.child(icon("heart").size_4().text_color(rgb(0xff0033))))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(icon("thumbs-up").size_4().text_color(p.text2))
+                                    .child(
+                                        metrics::from_text(
+                                            MetricKind::Likes,
+                                            Some(c.likes.as_str()),
+                                        )
+                                        .unwrap_or_else(|| c.likes.clone()),
+                                    ),
+                            )
+                            .when(c.hearted, |d| {
+                                d.child(icon("heart").size_4().text_color(rgb(0xff0033)))
+                            })
                             .children(toggle),
                     ),
             )
             .into_any_element();
-        let Some(r) = self.replies.get(&c.id) else { return el };
+        let Some(r) = self.replies.get(&c.id) else {
+            return el;
+        };
         let r: Option<Result<(Vec<Comment>, Option<String>), String>> = match r {
             Load::Loading => None,
             Load::Error(e) => Some(Err(e.clone())),
@@ -498,15 +636,41 @@ impl ShortsPage {
         };
         let mut col = div().flex().flex_col();
         match r {
-            None => col = col.child(thread_branch(spinner(cx).into_any_element(), true, size, p.border)),
-            Some(Err(e)) => col = col.child(thread_branch(div().text_xs().text_color(p.text2).child(e).into_any_element(), true, size, p.border)),
+            None => {
+                col = col.child(thread_branch(
+                    spinner(cx).into_any_element(),
+                    true,
+                    size,
+                    p.border,
+                    cx,
+                ))
+            }
+            Some(Err(e)) => {
+                col = col.child(thread_branch(
+                    div()
+                        .text_xs()
+                        .text_color(p.text2)
+                        .child(e)
+                        .into_any_element(),
+                    true,
+                    size,
+                    p.border,
+                    cx,
+                ))
+            }
             Some(Ok((list, cont))) => {
                 // replies to replies nest under the reply they answer
                 let parents = reply_parents(&list);
                 let roots: Vec<usize> = (0..list.len()).filter(|&i| parents[i].is_none()).collect();
                 for (k, &i) in roots.iter().enumerate() {
                     let last = k + 1 == roots.len() && cont.is_none();
-                    col = col.child(thread_branch(self.reply_subtree(&list, &parents, i, cx), last, size, p.border));
+                    col = col.child(thread_branch(
+                        self.reply_subtree(&list, &parents, i, cx),
+                        last,
+                        size,
+                        p.border,
+                        cx,
+                    ));
                 }
                 if let Some(tok) = cont {
                     col = col.child(thread_branch(
@@ -517,16 +681,24 @@ impl ShortsPage {
                             .text_color(p.link)
                             .cursor_pointer()
                             .child(t("Show more replies"))
-                            .on_click(cx.listener(move |t, _, _, cx| t.load_replies(cid.clone(), tok.clone(), cx)))
+                            .on_click(cx.listener(move |t, _, _, cx| {
+                                t.load_replies(cid.clone(), tok.clone(), cx)
+                            }))
                             .into_any_element(),
                         true,
                         size,
                         p.border,
+                        cx,
                     ));
                 }
             }
         }
-        div().flex().flex_col().child(el).child(col).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .child(el)
+            .child(col)
+            .into_any_element()
     }
 
     fn render_comments(&mut self, h: Pixels, cx: &mut Context<Self>) -> AnyElement {
@@ -535,22 +707,27 @@ impl ShortsPage {
         let count = ready.and_then(|c| c.count_text.clone());
         let top_tok = ready.and_then(|c| c.sort_top_token.clone());
         let new_tok = ready.and_then(|c| c.sort_new_token.clone());
-        let sort_chip = |id: &'static str, label: &'static str, tok: Option<String>, cx: &mut Context<Self>| {
-            let p = pal(cx);
-            div()
-                .id(id)
-                .px_3()
-                .py_1()
-                .rounded_full()
-                .text_xs()
-                .font_weight(FontWeight::MEDIUM)
-                .bg(p.chip)
-                .text_color(p.text)
-                .cursor_pointer()
-                .hover(move |s| s.bg(p.hover))
-                .child(label)
-                .when_some(tok, |d, tok| d.on_click(cx.listener(move |t, _, _, cx| t.load_comment_page(tok.clone(), false, cx))))
-        };
+        let sort_chip =
+            |id: &'static str, label: &'static str, tok: Option<String>, cx: &mut Context<Self>| {
+                let p = pal(cx);
+                div()
+                    .id(id)
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .bg(p.chip)
+                    .text_color(p.text)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(p.hover))
+                    .child(label)
+                    .when_some(tok, |d, tok| {
+                        d.on_click(cx.listener(move |t, _, _, cx| {
+                            t.load_comment_page(tok.clone(), false, cx)
+                        }))
+                    })
+            };
         let header = div()
             .flex()
             .flex_col()
@@ -569,25 +746,59 @@ impl ShortsPage {
                             .flex()
                             .items_baseline()
                             .gap_2()
-                            .child(div().text_base().font_weight(FontWeight::BOLD).text_color(p.text).child(t("Comments")))
-                            .when_some(count, |d, c| d.child(div().text_sm().text_color(p.text2).child(c))),
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(p.text)
+                                    .child(t("Comments")),
+                            )
+                            .when_some(count, |d, c| {
+                                d.child(div().text_sm().text_color(p.text2).child(c))
+                            }),
                     )
-                    .child(icon_button("sh-cm-close", "x", cx).on_click(cx.listener(|t, _, _, cx| {
-                        t.show_comments = false;
-                        cx.notify();
-                    }))),
+                    .child(icon_button("sh-cm-close", "x", cx).on_click(cx.listener(
+                        |t, _, _, cx| {
+                            t.show_comments = false;
+                            cx.notify();
+                        },
+                    ))),
             )
             .when(top_tok.is_some() || new_tok.is_some(), |d| {
-                d.child(div().flex().gap_2().child(sort_chip("sh-cm-top", t("Top"), top_tok, cx)).child(sort_chip("sh-cm-new", t("Newest"), new_tok, cx)))
+                d.child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(sort_chip("sh-cm-top", t("Top"), top_tok, cx))
+                        .child(sort_chip("sh-cm-new", t("Newest"), new_tok, cx)),
+                )
             });
-        let mut body = div().id("sh-cm-list").flex_1().min_h_0().overflow_y_scroll().px_4().py_3().flex().flex_col().gap_4();
+        let mut body = div()
+            .id("sh-cm-list")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px_4()
+            .py_3()
+            .flex()
+            .flex_col()
+            .gap_4();
         match &self.comments {
-            None | Some(Load::Loading) => body = body.child(div().py_8().flex().justify_center().child(spinner(cx))),
-            Some(Load::Error(e)) => body = body.child(div().text_sm().text_color(p.text2).child(t(e).to_string())),
+            None | Some(Load::Loading) => {
+                body = body.child(div().py_8().flex().justify_center().child(spinner(cx)))
+            }
+            Some(Load::Error(e)) => {
+                body = body.child(div().text_sm().text_color(p.text2).child(t(e).to_string()))
+            }
             Some(Load::Ready(page)) => {
                 let (list, more) = (page.comments.clone(), page.continuation.clone());
                 if list.is_empty() {
-                    body = body.child(div().text_sm().text_color(p.text2).child(t("No comments yet.")));
+                    body = body.child(
+                        div()
+                            .text_sm()
+                            .text_color(p.text2)
+                            .child(t("No comments yet.")),
+                    );
                 }
                 for c in &list {
                     body = body.child(self.comment_row(c, false, false, cx));
@@ -601,8 +812,14 @@ impl ShortsPage {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(p.link)
                             .cursor_pointer()
-                            .child(if self.comments_more { t("Loading…") } else { t("Show more comments") })
-                            .on_click(cx.listener(move |t, _, _, cx| t.load_comment_page(tok.clone(), true, cx))),
+                            .child(if self.comments_more {
+                                t("Loading…")
+                            } else {
+                                t("Show more comments")
+                            })
+                            .on_click(cx.listener(move |t, _, _, cx| {
+                                t.load_comment_page(tok.clone(), true, cx)
+                            })),
                     );
                 }
             }
@@ -626,7 +843,13 @@ impl ShortsPage {
         // A touchpad swipe is a stream of small deltas and a wheel notch one big one.
         // Sum them, move one Short past a threshold, and ignore the rest of that
         // gesture (it ends after a short pause).
-        if !cx.global::<UiState>().fullscreen && self.show_comments && self.comments_bounds.get().contains(&window.mouse_position()) {
+        if !cx.global::<UiState>().fullscreen
+            && self.show_comments
+            && self
+                .comments_bounds
+                .get()
+                .contains(&window.mouse_position())
+        {
             return;
         }
         let dy: f32 = ev.delta.pixel_delta(window.line_height()).y.into();
@@ -654,19 +877,31 @@ impl ShortsPage {
     }
 
     pub fn step(&mut self, direction: i32, cx: &mut Context<Self>) {
-        let Some(next) = self.idx.checked_add_signed(direction as isize) else { return };
+        let Some(next) = self.idx.checked_add_signed(direction as isize) else {
+            return;
+        };
         if next >= self.list.len() || self.slide.is_some() {
             return;
         }
         if !cx.reduce_motion() {
             let pl = player(cx);
             let playing = pl.read(cx);
-            let frame = if !playing.audio_only && !playing.loading && playing.video.as_ref().is_some_and(|v| v.id == self.list[self.idx].id) {
+            let frame = if !playing.audio_only
+                && !playing.loading
+                && playing
+                    .video
+                    .as_ref()
+                    .is_some_and(|v| v.id == self.list[self.idx].id)
+            {
                 playing.frame.clone()
             } else {
                 None
             };
-            self.slide = Some(ShortSlide { previous: self.idx, started: Instant::now(), frame });
+            self.slide = Some(ShortSlide {
+                previous: self.idx,
+                started: Instant::now(),
+                frame,
+            });
         }
         self.idx = next;
         self.play_current(cx);
@@ -679,8 +914,18 @@ impl Render for ShortsPage {
         let ui = *cx.global::<UiState>();
         let pl = player(cx);
         let playing = pl.read(cx);
-        let ready = playing.playback_ready && self.list.get(self.idx).zip(playing.video.as_ref()).is_some_and(|(short, video)| short.id == video.id);
-        crate::player::shorts_preload::update(&self.list[self.idx..], playing.quality, playing.audio_only, ready);
+        let ready = playing.playback_ready
+            && self
+                .list
+                .get(self.idx)
+                .zip(playing.video.as_ref())
+                .is_some_and(|(short, video)| short.id == video.id);
+        crate::player::shorts_preload::update(
+            &self.list[self.idx..],
+            playing.quality,
+            playing.audio_only,
+            ready,
+        );
         if self.initial_play && !self.list.is_empty() {
             // Let the page paint before initializing mpv, including when opening a Short by URL.
             cx.on_next_frame(window, |page, _, cx| {
@@ -690,7 +935,13 @@ impl Render for ShortsPage {
             });
         }
         if ready {
-            if let Some(id) = self.list.get(self.idx + 1).map(|v| &v.id).filter(|id| self.next_meta.as_ref() != Some(*id)).cloned() {
+            if let Some(id) = self
+                .list
+                .get(self.idx + 1)
+                .map(|v| &v.id)
+                .filter(|id| self.next_meta.as_ref() != Some(*id))
+                .cloned()
+            {
                 self.next_meta = Some(id.clone());
                 self.fetch_meta(id, cx);
             }
@@ -700,52 +951,101 @@ impl Render for ShortsPage {
         }
         if self.list.is_empty() {
             crate::ui::slot::clear_slot(cx);
-            return div().size_full().flex().items_center().justify_center().child(if self.loading { spinner(cx).into_any_element() } else { empty_state("zap", "No Shorts found", "", cx).into_any_element() }).into_any_element();
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(if self.loading {
+                    spinner(cx).into_any_element()
+                } else {
+                    empty_state("zap", "No Shorts found", "", cx).into_any_element()
+                })
+                .into_any_element();
         }
         let v = self.list[self.idx].clone();
         let rem = window.rem_size();
         let yt_layout = store::settings_snapshot().shorts_yt_layout;
-        let available_h = if ui.fullscreen { ui.viewport.height.max(px(240.)) } else { (ui.viewport.height - px(88.)).max(px(400.)) };
+        let available_h = if ui.fullscreen {
+            ui.viewport.height.max(px(240.))
+        } else {
+            (ui.viewport.height - px(88.)).max(px(400.))
+        };
         let video_w = available_h * (9. / 16.);
         // Use the space beside the video first. On small windows give the title its own row.
         let side_space = if ui.fullscreen {
             (ui.viewport.width - video_w) * 0.5 - rem * 2.
         } else {
-            let comments_w = if self.show_comments { px(380.) + rem } else { px(0.) };
+            let comments_w = if self.show_comments {
+                px(380.) + rem
+            } else {
+                px(0.)
+            };
             ui.content_width - video_w - comments_w - rem * 9.
         };
         let below = side_space < rem * 8. && (ui.fullscreen || !yt_layout);
-        let info_width = if yt_layout { px(250.) } else { side_space.min(px(250.)) };
+        let info_width = if yt_layout {
+            px(250.)
+        } else {
+            side_space.min(px(250.))
+        };
         let compact_channel = below && !ui.fullscreen && !v.channel_name.is_empty();
         let caption_h = rem * if compact_channel { 4.5 } else { 3.5 };
-        let h = if below { available_h - caption_h } else { available_h };
+        let h = if below {
+            available_h - caption_h
+        } else {
+            available_h
+        };
         let w = (h * (9. / 16.)).min(ui.viewport.width);
         let title = |color: Hsla| {
-            selectable_text(SharedString::from(format!("shorts-title-{}", v.id)), v.title.clone())
-                .min_w_0()
-                .text_base()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(color)
-                .line_clamp(if below { 2 } else { 4 })
+            selectable_text(
+                SharedString::from(format!("shorts-title-{}", v.id)),
+                v.title.clone(),
+            )
+            .min_w_0()
+            .text_base()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(color)
+            .line_clamp(if below { 2 } else { 4 })
         };
         let video_column = |video: Div| {
-            div().w(w).min_w_0().flex().flex_col().child(video).when(below, |d| {
-                d.child(
-                    div().w_full().h(caption_h).pt_1()
-                        .child(title(if ui.fullscreen { white() } else { p.text }))
-                        .when(compact_channel, |d| {
-                            let channel = v.channel_id.clone();
-                            d.child(div().id("shorts-caption-channel").text_xs().text_color(p.text2).truncate()
-                                .child(gpui_kit::base::SelectableText::new(SharedString::from(format!("sh-ch-cap-{}", v.id)), v.channel_name.clone()))
-                                .when_some(channel, |d, id| d.cursor_pointer().on_click(move |_, window, cx| {
-                                    if has_text_selection(window, cx) {
-                                        return;
-                                    }
-                                    navigate(Route::Channel(id.clone()), window, cx)
-                                })))
-                        }),
-                )
-            })
+            div()
+                .w(w)
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(video)
+                .when(below, |d| {
+                    d.child(
+                        div()
+                            .w_full()
+                            .h(caption_h)
+                            .pt_1()
+                            .child(title(if ui.fullscreen { white() } else { p.text }))
+                            .when(compact_channel, |d| {
+                                let channel = v.channel_id.clone();
+                                d.child(
+                                    div()
+                                        .id("shorts-caption-channel")
+                                        .text_xs()
+                                        .text_color(p.text2)
+                                        .truncate()
+                                        .child(gpui_kit::base::SelectableText::new(
+                                            SharedString::from(format!("sh-ch-cap-{}", v.id)),
+                                            v.channel_name.clone(),
+                                        ))
+                                        .when_some(channel, |d, id| {
+                                            d.cursor_pointer().on_click(move |_, window, cx| {
+                                                if has_text_selection(window, cx) {
+                                                    return;
+                                                }
+                                                navigate(Route::Channel(id.clone()), window, cx)
+                                            })
+                                        }),
+                                )
+                            }),
+                    )
+                })
         };
         // Warm the next cover in the same cache the player uses while waiting for its first frame.
         if let Some(next) = self.list.get(self.idx + 1).filter(|_| ready) {
@@ -800,9 +1100,16 @@ impl Render for ShortsPage {
                 .items_center()
                 .justify_center()
                 .on_scroll(cx.listener(Self::scroll_shorts))
-                .when(!below, |d| d.child(
-                    div().absolute().right((ui.viewport.width + w) * 0.5 + rem).bottom_4().w(side_space.min(px(250.))).child(title(white())),
-                ))
+                .when(!below, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .right((ui.viewport.width + w) * 0.5 + rem)
+                            .bottom_4()
+                            .w(side_space.min(px(250.)))
+                            .child(title(white())),
+                    )
+                })
                 .child(video_column(cards.child(current)))
                 .into_any_element();
         }
@@ -819,18 +1126,53 @@ impl Render for ShortsPage {
                 .items_center()
                 .gap_1()
                 .cursor_pointer()
-                .child(div().flex().items_center().justify_center().size_12().rounded_full().bg(p.chip).hover(move |s| s.bg(p.hover)).child(icon(ic).size_6().text_color(p.text)))
-                .child(div().text_xs().font_weight(FontWeight::MEDIUM).text_color(p.text).child(label))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size_12()
+                        .rounded_full()
+                        .bg(p.chip)
+                        .hover(move |s| s.bg(p.hover))
+                        .child(icon(ic).size_6().text_color(p.text)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.text)
+                        .child(label),
+                )
         };
-        let comments_panel = if self.show_comments { self.render_comments(h, cx) } else { div().into_any_element() };
+        let comments_panel = if self.show_comments {
+            self.render_comments(h, cx)
+        } else {
+            div().into_any_element()
+        };
         let can_up = self.idx > 0;
         let can_down = self.idx + 1 < self.list.len();
         let st = store::settings_snapshot();
         let edge_nav = yt_layout && st.shorts_edge_nav;
         let show_subscribe = yt_layout && st.shorts_show_subscribe;
         let show_dislike = !yt_layout || st.shorts_show_dislike;
+        let vote_label = |kind, value| {
+            if i18n::language() == crate::i18n::AppLanguage::Arabic {
+                metrics::count(kind, value)
+            } else {
+                compact_number(value)
+            }
+        };
         let dislike_btn = show_dislike.then(|| {
-            action("sh-dislike", "thumbs-down", votes.as_ref().map(|v| compact_number(v.dislikes)).unwrap_or_else(|| t("Dislike").into()), cx)
+            action(
+                "sh-dislike",
+                "thumbs-down",
+                votes
+                    .as_ref()
+                    .map(|v| vote_label(MetricKind::Dislikes, v.dislikes))
+                    .unwrap_or_else(|| t("Dislike").into()),
+                cx,
+            )
         });
         let info_panel = (!below).then(|| {
             let meta = self.meta.get(&v.id);
@@ -849,15 +1191,65 @@ impl Render for ShortsPage {
                         description: None,
                     })
                 });
-            let subs_text = ch.as_ref().and_then(|c| c.subscribers_text.clone()).filter(|s| !s.is_empty() && !store::settings_snapshot().hide_subscriber_counts);
+            let subs_text = ch
+                .as_ref()
+                .and_then(|c| c.subscribers_text.as_deref())
+                .filter(|s| !s.is_empty() && !store::settings_snapshot().hide_subscriber_counts)
+                .and_then(|s| metrics::from_text_selectable(MetricKind::Subscribers, Some(s)));
             let sub_btn = if show_subscribe {
-                ch.as_ref().map(|c| crate::ui::cards::subscribe_button("sh-sub".into(), c, store::is_subscribed(&c.id), cx))
+                ch.as_ref().map(|c| {
+                    crate::ui::cards::subscribe_button(
+                        "sh-sub".into(),
+                        c,
+                        store::is_subscribed(&c.id),
+                        cx,
+                    )
+                })
             } else {
                 None
             };
             let meta_line = meta.filter(|_| yt_layout).and_then(|m| {
-                let parts: Vec<&str> = [m.views_text.as_str(), m.date_text.as_str()].into_iter().filter(|s| !s.is_empty()).collect();
-                (!parts.is_empty()).then(|| parts.join(" • "))
+                let views = metrics::from_text(MetricKind::Views, Some(m.views_text.as_str()));
+                let date = (!m.date_text.is_empty()).then(|| m.date_text.as_str());
+                if views.is_none() && date.is_none() {
+                    return None;
+                }
+                if LayoutDirection::global(cx).is_rtl() {
+                    // Date precedes the count in Arabic. Each value is a separate
+                    // element with display-only isolation; the source strings in
+                    // the model and history are never rewritten.
+                    let mut row = div().flex_row_dir(cx).items_center().gap_1();
+                    if let Some(d) = date {
+                        row = row.child(
+                            div()
+                                .id(SharedString::from(format!("sh-date-{}", v.id)))
+                                .child(i18n::isolate_ltr(d)),
+                        );
+                        if views.is_some() {
+                            row = row.child("•");
+                        }
+                    }
+                    if let Some(vt) = views {
+                        row = row.child(
+                            div()
+                                .id(SharedString::from(format!("sh-views-{}", v.id)))
+                                .child(vt),
+                        );
+                    }
+                    Some(row.text_xs().text_color(p.text2).into_any_element())
+                } else {
+                    let joined = [m.views_text.as_str(), m.date_text.as_str()]
+                        .into_iter()
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" • ");
+                    Some(
+                        selectable_text(SharedString::from(format!("sh-meta-{}", v.id)), joined)
+                            .text_xs()
+                            .text_color(p.text2)
+                            .into_any_element(),
+                    )
+                }
             });
             div()
                 .w(info_width)
@@ -883,7 +1275,12 @@ impl Render for ShortsPage {
                                 navigate(Route::Channel(c), window, cx);
                             }
                         })
-                        .child(avatar(v.channel_avatar.as_deref(), px(36.), &v.channel_name, cx))
+                        .child(avatar(
+                            v.channel_avatar.as_deref(),
+                            px(36.),
+                            &v.channel_name,
+                            cx,
+                        ))
                         .child(
                             div()
                                 .flex()
@@ -895,14 +1292,21 @@ impl Render for ShortsPage {
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(p.text)
                                         .truncate()
-                                        .child(gpui_kit::base::SelectableText::new(SharedString::from(format!("sh-ch-name-{}", v.id)), v.channel_name.clone())),
+                                        .child(gpui_kit::base::SelectableText::new(
+                                            SharedString::from(format!("sh-ch-name-{}", v.id)),
+                                            v.channel_name.clone(),
+                                        )),
                                 )
-                                .when_some(subs_text, |d, t| d.child(div().text_xs().text_color(p.text2).truncate().child(t))),
+                                .when_some(subs_text, |d, t| {
+                                    d.child(div().text_xs().text_color(p.text2).truncate().child(t))
+                                }),
                         ),
                 )
-                .when_some(sub_btn, |d, btn| d.child(div().flex().items_center().child(btn)))
+                .when_some(sub_btn, |d, btn| {
+                    d.child(div().flex().items_center().child(btn))
+                })
                 .child(title(p.text))
-                .when_some(meta_line, |d, t| d.child(selectable_text(SharedString::from(format!("sh-meta-{}", v.id)), t).text_xs().text_color(p.text2)))
+                .when_some(meta_line, |d, t| d.child(t))
         });
         div()
             .id("shorts")
@@ -912,7 +1316,9 @@ impl Render for ShortsPage {
             .items_center()
             .justify_center()
             // Balance the wider title column when there is room beside the controls.
-            .when(!below && !self.show_comments, |d| d.pr((side_space - info_width).clamp(px(0.), rem * 4.)))
+            .when(!below && !self.show_comments, |d| {
+                d.pr((side_space - info_width).clamp(px(0.), rem * 4.))
+            })
             .gap_4()
             .on_scroll(cx.listener(Self::scroll_shorts))
             .children(info_panel)
@@ -925,23 +1331,61 @@ impl Render for ShortsPage {
                     .h(h)
                     .gap_4()
                     .pb_4()
-                    .child(action("sh-like", "thumbs-up", votes.as_ref().map(|v| compact_number(v.likes)).unwrap_or_else(|| t("Like").into()), cx))
+                    .child(action(
+                        "sh-like",
+                        "thumbs-up",
+                        votes
+                            .as_ref()
+                            .map(|v| vote_label(MetricKind::Likes, v.likes))
+                            .unwrap_or_else(|| t("Like").into()),
+                        cx,
+                    ))
                     .when_some(dislike_btn, |d, btn| d.child(btn))
                     .child({
-                        let n = self.meta.get(&v.id).and_then(|w| w.comment_count_text.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| t("Comments").into());
-                        action("sh-comments", "message-square", n, cx).on_click(cx.listener(|t, _, _, cx| {
-                            if t.show_comments {
-                                t.show_comments = false;
-                                cx.notify();
-                            } else {
-                                t.open_comments(cx);
-                            }
-                        }))
+                        let n = self
+                            .meta
+                            .get(&v.id)
+                            .and_then(|w| w.comment_count_text.as_deref())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or("Comments");
+                        let label = metrics::from_text(MetricKind::Comments, Some(n))
+                            .unwrap_or_else(|| t(n).to_string());
+                        action("sh-comments", "message-square", label, cx).on_click(cx.listener(
+                            |t, _, _, cx| {
+                                if t.show_comments {
+                                    t.show_comments = false;
+                                    cx.notify();
+                                } else {
+                                    t.open_comments(cx);
+                                }
+                            },
+                        ))
                     })
-                    .child(action("sh-share", "share-2", t("Share").into(), cx).on_click(move |_, _, cx| copy_to_clipboard(format!("https://youtube.com/shorts/{share_id}"), cx)))
-                    .child(action("sh-watch", "monitor-play", t("Open video").into(), cx).on_click(move |_, window, cx| {
-                        navigate(Route::Watch { id: watch_id.clone(), playlist: None, start: None }, window, cx)
-                    })),
+                    .child(
+                        action("sh-share", "share-2", t("Share").into(), cx).on_click(
+                            move |_, _, cx| {
+                                copy_to_clipboard(
+                                    format!("https://youtube.com/shorts/{share_id}"),
+                                    cx,
+                                )
+                            },
+                        ),
+                    )
+                    .child(
+                        action("sh-watch", "monitor-play", t("Open video").into(), cx).on_click(
+                            move |_, window, cx| {
+                                navigate(
+                                    Route::Watch {
+                                        id: watch_id.clone(),
+                                        playlist: None,
+                                        start: None,
+                                    },
+                                    window,
+                                    cx,
+                                )
+                            },
+                        ),
+                    ),
             )
             .when(self.show_comments, |d| {
                 let b = self.comments_bounds.clone();
@@ -949,7 +1393,11 @@ impl Render for ShortsPage {
                     div()
                         .relative()
                         .flex_none()
-                        .child(canvas(move |bounds, _, _| b.set(bounds), |_, _, _, _| {}).absolute().size_full())
+                        .child(
+                            canvas(move |bounds, _, _| b.set(bounds), |_, _, _, _| {})
+                                .absolute()
+                                .size_full(),
+                        )
                         .child(comments_panel),
                 )
             })
@@ -958,9 +1406,27 @@ impl Render for ShortsPage {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .when(edge_nav, |d| d.absolute().right(px(24.)).top_0().bottom_0().justify_center())
-                    .child(icon_button("sh-up", "arrow-up", cx).size_12().bg(p.chip).when(!can_up, |d| d.opacity(0.3)).on_click(cx.listener(|t, _, _, cx| t.step(-1, cx))))
-                    .child(icon_button("sh-down", "arrow-down", cx).size_12().bg(p.chip).when(!can_down, |d| d.opacity(0.3)).on_click(cx.listener(|t, _, _, cx| t.step(1, cx)))),
+                    .when(edge_nav, |d| {
+                        d.absolute()
+                            .right(px(24.))
+                            .top_0()
+                            .bottom_0()
+                            .justify_center()
+                    })
+                    .child(
+                        icon_button("sh-up", "arrow-up", cx)
+                            .size_12()
+                            .bg(p.chip)
+                            .when(!can_up, |d| d.opacity(0.3))
+                            .on_click(cx.listener(|t, _, _, cx| t.step(-1, cx))),
+                    )
+                    .child(
+                        icon_button("sh-down", "arrow-down", cx)
+                            .size_12()
+                            .bg(p.chip)
+                            .when(!can_down, |d| d.opacity(0.3))
+                            .on_click(cx.listener(|t, _, _, cx| t.step(1, cx))),
+                    ),
             )
             .into_any_element()
     }

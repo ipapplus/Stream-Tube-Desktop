@@ -27,6 +27,7 @@ rand = "0.9"
 open = "5"
 raw-window-handle = "0.6"
 sha1 = "0.11"
+unicode-bidi = "0.3"
 # QuickJS, to solve the JavaScript challenges in YouTube stream URLs when no
 # Deno or Node.js is installed; see src/api/jsc.rs
 rquickjs = "0.14"

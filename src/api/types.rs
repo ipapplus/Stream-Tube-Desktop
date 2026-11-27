@@ -238,7 +238,11 @@ impl Storyboard {
         let per = self.cols * self.rows;
         let sheet = idx / per;
         let within = idx % per;
-        Some((self.url_template.replace("$M", &sheet.to_string()), within % self.cols, within / self.cols))
+        Some((
+            self.url_template.replace("$M", &sheet.to_string()),
+            within % self.cols,
+            within / self.cols,
+        ))
     }
 }
 

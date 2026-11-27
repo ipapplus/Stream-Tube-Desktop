@@ -5,7 +5,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Foundation::TypedEventHandler;
 use windows::Media::{
     MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControls,
-    SystemMediaTransportControlsButton as Button, SystemMediaTransportControlsButtonPressedEventArgs,
+    SystemMediaTransportControlsButton as Button,
+    SystemMediaTransportControlsButtonPressedEventArgs,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::WinRT::ISystemMediaTransportControlsInterop;
@@ -18,9 +19,19 @@ struct Published {
 }
 
 impl Published {
-    fn update(&mut self, transport: &SystemMediaTransportControls, player: &Player) -> windows::core::Result<()> {
-        let video = player.video.as_ref().map(|v| (v.title.as_str(), v.channel_name.as_str()));
-        let previous = self.video.as_ref().map(|(title, artist)| (title.as_str(), artist.as_str()));
+    fn update(
+        &mut self,
+        transport: &SystemMediaTransportControls,
+        player: &Player,
+    ) -> windows::core::Result<()> {
+        let video = player
+            .video
+            .as_ref()
+            .map(|v| (v.title.as_str(), v.channel_name.as_str()));
+        let previous = self
+            .video
+            .as_ref()
+            .map(|(title, artist)| (title.as_str(), artist.as_str()));
         if video != previous {
             let display = transport.DisplayUpdater()?;
             if let Some((title, channel)) = video {
@@ -58,7 +69,11 @@ impl Published {
     }
 }
 
-fn observe_player(active: &Entity<Player>, transport: &SystemMediaTransportControls, cx: &mut App) -> Subscription {
+fn observe_player(
+    active: &Entity<Player>,
+    transport: &SystemMediaTransportControls,
+    cx: &mut App,
+) -> Subscription {
     let mut published = Published::default();
     let _ = published.update(transport, active.read(cx));
     let transport = transport.clone();
@@ -68,15 +83,28 @@ fn observe_player(active: &Entity<Player>, transport: &SystemMediaTransportContr
 }
 
 pub(crate) fn init(window: &Window, cx: &mut App) {
-    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else { return };
-    let Ok(interop) = factory::<SystemMediaTransportControls, ISystemMediaTransportControlsInterop>() else { return };
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return;
+    };
+    let Ok(interop) =
+        factory::<SystemMediaTransportControls, ISystemMediaTransportControlsInterop>()
+    else {
+        return;
+    };
     // SAFETY: the HWND belongs to the live main window on this thread.
-    let Ok(transport) = (unsafe { interop.GetForWindow::<SystemMediaTransportControls>(HWND(handle.hwnd.get() as _)) }) else {
+    let Ok(transport) = (unsafe {
+        interop.GetForWindow::<SystemMediaTransportControls>(HWND(handle.hwnd.get() as _))
+    }) else {
         return;
     };
     let (send, mut buttons) = mpsc::unbounded();
-    let handler = TypedEventHandler::<SystemMediaTransportControls, SystemMediaTransportControlsButtonPressedEventArgs>::new(move |_, event| {
+    let handler = TypedEventHandler::<
+        SystemMediaTransportControls,
+        SystemMediaTransportControlsButtonPressedEventArgs,
+    >::new(move |_, event| {
         if let Some(event) = event.as_ref() {
             if let Ok(button) = event.Button() {
                 let _ = send.unbounded_send(button);
@@ -84,7 +112,9 @@ pub(crate) fn init(window: &Window, cx: &mut App) {
         }
         Ok(())
     });
-    let Ok(token) = transport.ButtonPressed(&handler) else { return };
+    let Ok(token) = transport.ButtonPressed(&handler) else {
+        return;
+    };
     let active = player(cx);
     let mut binding = (active.entity_id(), observe_player(&active, &transport, cx));
     let observed = transport.clone();
@@ -93,36 +123,41 @@ pub(crate) fn init(window: &Window, cx: &mut App) {
         if binding.0 != active.entity_id() {
             binding = (active.entity_id(), observe_player(&active, &observed, cx));
         }
-    }).detach();
+    })
+    .detach();
     cx.spawn(async move |cx| {
         while let Some(button) = buttons.next().await {
-            let _ = cx.update(|cx| player(cx).update(cx, |p, cx| {
-                if p.video.is_none() {
-                    return;
-                }
-                match button {
-                    Button::Play if p.eof => p.toggle_pause(cx),
-                    Button::Play => p.set_paused(false, cx),
-                    Button::Pause => p.set_paused(true, cx),
-                    Button::Next => {
-                        if let Some(index) = p.queue_pos.filter(|i| i + 1 < p.queue.len()) {
-                            p.play_queue_index(index + 1, cx);
-                        }
+            let _ = cx.update(|cx| {
+                player(cx).update(cx, |p, cx| {
+                    if p.video.is_none() {
+                        return;
                     }
-                    Button::Previous => {
-                        if let Some(index) = p.queue_pos.filter(|i| *i > 0) {
-                            p.play_queue_index(index - 1, cx);
+                    match button {
+                        Button::Play if p.eof => p.toggle_pause(cx),
+                        Button::Play => p.set_paused(false, cx),
+                        Button::Pause => p.set_paused(true, cx),
+                        Button::Next => {
+                            if let Some(index) = p.queue_pos.filter(|i| i + 1 < p.queue.len()) {
+                                p.play_queue_index(index + 1, cx);
+                            }
                         }
+                        Button::Previous => {
+                            if let Some(index) = p.queue_pos.filter(|i| *i > 0) {
+                                p.play_queue_index(index - 1, cx);
+                            }
+                        }
+                        _ => return,
                     }
-                    _ => return,
-                }
-                cx.notify();
-            }));
+                    cx.notify();
+                })
+            });
         }
-    }).detach();
+    })
+    .detach();
     cx.on_app_quit(move |_| {
         let _ = transport.RemoveButtonPressed(token);
         let _ = transport.SetIsEnabled(false);
         std::future::ready(())
-    }).detach();
+    })
+    .detach();
 }

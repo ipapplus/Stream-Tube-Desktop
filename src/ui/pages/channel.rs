@@ -1,6 +1,7 @@
 use crate::api::innertube;
-use crate::i18n::{t, tf};
 use crate::api::types::*;
+use crate::i18n::{t, tf};
+use crate::metrics::{self, MetricKind};
 use crate::store;
 use crate::ui::app::{MenuItem, open_menu};
 use crate::ui::cards::*;
@@ -32,19 +33,33 @@ struct ChannelPage0 {
 }
 
 /// Tabs shown, by kind (see ChannelTab::kind), so channels work in every content language.
-const WANTED_TABS: &[&str] = &["featured", "videos", "shorts", "streams", "podcasts", "releases", "playlists", "courses", "shows"];
+const WANTED_TABS: &[&str] = &[
+    "featured",
+    "videos",
+    "shorts",
+    "streams",
+    "podcasts",
+    "releases",
+    "playlists",
+    "courses",
+    "shows",
+];
 
 impl ChannelPage {
     pub fn new(id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(t("Search channel")));
-        let sub = cx.subscribe_in(&search, window, |this: &mut Self, st, ev: &InputEvent, _, cx| {
-            if let InputEvent::PressEnter { .. } = ev {
-                let q = st.read(cx).value().to_string();
-                if !q.trim().is_empty() {
-                    this.search_channel(q, cx);
+        let sub = cx.subscribe_in(
+            &search,
+            window,
+            |this: &mut Self, st, ev: &InputEvent, _, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    let q = st.read(cx).value().to_string();
+                    if !q.trim().is_empty() {
+                        this.search_channel(q, cx);
+                    }
                 }
-            }
-        });
+            },
+        );
         let mut s = Self {
             id,
             data: Load::Loading,
@@ -67,7 +82,8 @@ impl ChannelPage {
         let id = self.id.clone();
         cx.spawn(async move |this, cx| {
             // Videos tab first (most useful), header comes with it
-            let res = blocking(move || innertube::channel(&id, Some(crate::feed::VIDEOS_TAB))).await;
+            let res =
+                blocking(move || innertube::channel(&id, Some(crate::feed::VIDEOS_TAB))).await;
             let _ = this.update(cx, |this, cx| {
                 match res {
                     Ok(cp) => {
@@ -75,7 +91,9 @@ impl ChannelPage {
                             .tabs
                             .into_iter()
                             .filter(|t| WANTED_TABS.contains(&t.kind.as_str()))
-                            .filter(|t| !(store::settings_snapshot().hide_shorts && t.kind == "shorts"))
+                            .filter(|t| {
+                                !(store::settings_snapshot().hide_shorts && t.kind == "shorts")
+                            })
                             .collect();
                         this.tab = tabs.iter().position(|t| t.kind == "videos").unwrap_or(0);
                         this.tab_items = Load::Ready(cp.page.items);
@@ -83,7 +101,11 @@ impl ChannelPage {
                         if store::is_subscribed(&cp.info.id) {
                             store::subscribe(&cp.info.id, &cp.info.name, cp.info.avatar.as_deref());
                         }
-                        this.data = Load::Ready(ChannelPage0 { info: cp.info, banner: cp.banner, tabs });
+                        this.data = Load::Ready(ChannelPage0 {
+                            info: cp.info,
+                            banner: cp.banner,
+                            tabs,
+                        });
                     }
                     Err(e) => this.data = Load::Error(e.to_string()),
                 }
@@ -95,7 +117,9 @@ impl ChannelPage {
 
     fn select_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
         let Some(d) = self.data.ready() else { return };
-        let Some(t) = d.tabs.get(idx).cloned() else { return };
+        let Some(t) = d.tabs.get(idx).cloned() else {
+            return;
+        };
         self.tab = idx;
         self.searching = None;
         self.tab_items = Load::Loading;
@@ -191,11 +215,25 @@ impl Render for ChannelPage {
         localize_placeholder(&self.search, "Search channel", window, cx);
         let p = pal(cx);
         let has_more = self.continuation.is_some();
-        maybe_load_more(&self.scroll, &mut self.loading_more, has_more, cx, |this, cx| this.load_more(cx));
+        maybe_load_more(
+            &self.scroll,
+            &mut self.loading_more,
+            has_more,
+            cx,
+            |this, cx| this.load_more(cx),
+        );
         let width = content_width(cx).min(px(1284.));
         let d = match &self.data {
-            Load::Loading => return page_scroll("ch-scroll", &self.scroll).child(spinner(cx)).into_any_element(),
-            Load::Error(e) => return page_scroll("ch-scroll", &self.scroll).child(error_state(e, cx)).into_any_element(),
+            Load::Loading => {
+                return page_scroll("ch-scroll", &self.scroll)
+                    .child(spinner(cx))
+                    .into_any_element();
+            }
+            Load::Error(e) => {
+                return page_scroll("ch-scroll", &self.scroll)
+                    .child(error_state(e, cx))
+                    .into_any_element();
+            }
             Load::Ready(d) => d.clone(),
         };
         let s = store::settings_snapshot();
@@ -212,7 +250,7 @@ impl Render for ChannelPage {
             })
             .child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .items_center()
                     .gap_6()
                     .py_2()
@@ -227,7 +265,13 @@ impl Render for ChannelPage {
                             .child(
                                 selectable_text(
                                     SharedString::from(format!("ch-meta-{}", d.info.id)),
-                                    [d.info.handle.clone(), d.info.subscribers_text.clone().filter(|_| !store::settings_snapshot().hide_subscriber_counts), d.info.video_count_text.clone()]
+                                    [
+                                        d.info.handle.clone(),
+                                        d.info.subscribers_text.as_deref()
+                                            .filter(|_| !store::settings_snapshot().hide_subscriber_counts)
+                                            .and_then(|s| metrics::from_text_selectable(MetricKind::Subscribers, Some(s))),
+                                        metrics::from_text_selectable(MetricKind::Videos, d.info.video_count_text.as_deref()),
+                                    ]
                                         .into_iter()
                                         .flatten()
                                         .collect::<Vec<_>>()
@@ -313,7 +357,15 @@ impl Render for ChannelPage {
                             ),
                     ),
             );
-        let mut tabs = div().flex().items_center().gap_6().border_b_1().border_color(p.border);
+        let mut tabs = div()
+            .flex_row_dir(cx)
+            .items_center()
+            .gap_6()
+            .border_b_1()
+            .border_color(p.border)
+            .when(LayoutDirection::global(cx).is_rtl(), |d| {
+                d.flex_wrap().gap_y_2()
+            });
         for (i, t) in d.tabs.iter().enumerate() {
             let active = i == self.tab && self.searching.is_none();
             tabs = tabs.child(
@@ -332,14 +384,18 @@ impl Render for ChannelPage {
         }
         tabs = tabs.child(
             div()
-                .flex()
+                .flex_row_dir(cx)
                 .items_center()
                 .gap_2()
                 .w(px(220.))
                 .child(icon("search").size_4().text_color(p.text2))
                 .child(Input::new(&self.search).appearance(false).cleanable(true)),
         );
-        let tab_kind = d.tabs.get(self.tab).map(|t| t.kind.clone()).unwrap_or_default();
+        let tab_kind = d
+            .tabs
+            .get(self.tab)
+            .map(|t| t.kind.clone())
+            .unwrap_or_default();
         let body: AnyElement = match &self.tab_items {
             Load::Loading => spinner(cx).into_any_element(),
             Load::Error(e) => error_state(e, cx).into_any_element(),
@@ -347,18 +403,46 @@ impl Render for ChannelPage {
                 let items: Vec<&Item> = items
                     .iter()
                     .filter(|i| match i {
-                        Item::Video(v) => !store::is_filtered(v, &s) || store::settings_snapshot().blocked_channels.iter().any(|(c, _)| Some(c) == v.channel_id.as_ref()),
+                        Item::Video(v) => {
+                            !store::is_filtered(v, &s)
+                                || store::settings_snapshot()
+                                    .blocked_channels
+                                    .iter()
+                                    .any(|(c, _)| Some(c) == v.channel_id.as_ref())
+                        }
                         _ => true,
                     })
                     .collect();
                 if items.is_empty() {
-                    empty_state("video-off", "This channel has no content here", "", cx).into_any_element()
+                    empty_state("video-off", "This channel has no content here", "", cx)
+                        .into_any_element()
                 } else if tab_kind == "shorts" && self.searching.is_none() {
                     let (_, w) = grid_columns(width, 200.0, window.rem_size());
-                    grid(items.iter().filter_map(|i| i.as_video()).map(|v| shorts_card(v, w, cx)).collect(), width).into_any_element()
+                    grid(
+                        items
+                            .iter()
+                            .filter_map(|i| i.as_video())
+                            .map(|v| shorts_card(v, w, cx))
+                            .collect(),
+                        cx,
+                    )
+                    .into_any_element()
                 } else {
                     let (_, w) = grid_columns(width, 280.0, window.rem_size());
-                    let mut col = div().flex().flex_col().gap_6().child(grid(items.iter().map(|i| grid_item(i, w, tab_kind == "featured" || self.searching.is_some(), cx)).collect(), width));
+                    let mut col = div().flex().flex_col().gap_6().child(grid(
+                        items
+                            .iter()
+                            .map(|i| {
+                                grid_item(
+                                    i,
+                                    w,
+                                    tab_kind == "featured" || self.searching.is_some(),
+                                    cx,
+                                )
+                            })
+                            .collect(),
+                        cx,
+                    ));
                     if self.loading_more {
                         col = col.child(spinner(cx));
                     }
@@ -368,13 +452,16 @@ impl Render for ChannelPage {
         };
         page_scroll("ch-scroll", &self.scroll)
             .child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .px_6()
-                    .pt_4()
-                    .pb_24()
-                    .child(div().w(width).flex().flex_col().gap_4().child(header).child(tabs).child(body)),
+                div().flex().justify_center().px_6().pt_4().pb_24().child(
+                    div()
+                        .w(width)
+                        .flex()
+                        .flex_col()
+                        .gap_4()
+                        .child(header)
+                        .child(tabs)
+                        .child(body),
+                ),
             )
             .into_any_element()
     }

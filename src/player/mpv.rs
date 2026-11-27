@@ -72,9 +72,13 @@ impl Node {
     // All nodes and strings in an observed property belong to the current
     // mpv event and are consumed before the next call to mpv_wait_event.
     unsafe fn entries(&self, format: c_int) -> Option<(&NodeList, &[Node])> {
-        if self.format != format { return None }
+        if self.format != format {
+            return None;
+        }
         let list = unsafe { self.value.list.as_ref()? };
-        let values = if list.num <= 0 { &[] } else {
+        let values = if list.num <= 0 {
+            &[]
+        } else {
             unsafe { std::slice::from_raw_parts(list.values, list.num as usize) }
         };
         Some((list, values))
@@ -95,11 +99,14 @@ impl Node {
     unsafe fn cache_state(&self) -> Option<PropValue> {
         let ranges = unsafe { self.field(b"seekable-ranges")? };
         let (_, ranges) = unsafe { ranges.entries(MPV_FORMAT_NODE_ARRAY)? };
-        let ranges = ranges.iter().filter_map(|entry| {
-            let start = unsafe { entry.field(b"start")? }.number()?;
-            let end = unsafe { entry.field(b"end")? }.number()?;
-            (start.is_finite() && end.is_finite() && end > start).then_some((start, end))
-        }).collect();
+        let ranges = ranges
+            .iter()
+            .filter_map(|entry| {
+                let start = unsafe { entry.field(b"start")? }.number()?;
+                let end = unsafe { entry.field(b"end")? }.number()?;
+                (start.is_finite() && end.is_finite() && end > start).then_some((start, end))
+            })
+            .collect();
         let disk_bytes = unsafe { self.field(b"file-cache-bytes") }
             .filter(|n| n.format == MPV_FORMAT_INT64)
             .and_then(|n| u64::try_from(unsafe { n.value.integer }).ok())
@@ -138,7 +145,8 @@ struct Fns {
     initialize: unsafe extern "C" fn(*mut mpv_handle) -> c_int,
     terminate_destroy: unsafe extern "C" fn(*mut mpv_handle),
     set_option_string: unsafe extern "C" fn(*mut mpv_handle, *const c_char, *const c_char) -> c_int,
-    set_property_string: unsafe extern "C" fn(*mut mpv_handle, *const c_char, *const c_char) -> c_int,
+    set_property_string:
+        unsafe extern "C" fn(*mut mpv_handle, *const c_char, *const c_char) -> c_int,
     set_property: unsafe extern "C" fn(*mut mpv_handle, *const c_char, c_int, *mut c_void) -> c_int,
     get_property: unsafe extern "C" fn(*mut mpv_handle, *const c_char, c_int, *mut c_void) -> c_int,
     command: unsafe extern "C" fn(*mut mpv_handle, *mut *const c_char) -> c_int,
@@ -148,9 +156,16 @@ struct Fns {
     wakeup: unsafe extern "C" fn(*mut mpv_handle),
     free: unsafe extern "C" fn(*mut c_void),
     error_string: unsafe extern "C" fn(c_int) -> *const c_char,
-    rc_create: unsafe extern "C" fn(*mut *mut mpv_render_context, *mut mpv_handle, *mut mpv_render_param) -> c_int,
-    rc_set_update_callback:
-        unsafe extern "C" fn(*mut mpv_render_context, Option<unsafe extern "C" fn(*mut c_void)>, *mut c_void),
+    rc_create: unsafe extern "C" fn(
+        *mut *mut mpv_render_context,
+        *mut mpv_handle,
+        *mut mpv_render_param,
+    ) -> c_int,
+    rc_set_update_callback: unsafe extern "C" fn(
+        *mut mpv_render_context,
+        Option<unsafe extern "C" fn(*mut c_void)>,
+        *mut c_void,
+    ),
     rc_update: unsafe extern "C" fn(*mut mpv_render_context) -> u64,
     rc_get_info: unsafe extern "C" fn(*mut mpv_render_context, mpv_render_param) -> c_int,
     rc_render: unsafe extern "C" fn(*mut mpv_render_context, *mut mpv_render_param) -> c_int,
@@ -166,8 +181,7 @@ const LIBRARY_NAMES: &[&str] = &["libmpv.2.dylib"];
 const LIBRARY_NAMES: &[&str] = &["libmpv.so.2", "libmpv.so.1", "libmpv.so"];
 
 #[cfg(windows)]
-pub(super) const MISSING_WINDOWS_MPV: &str =
-    "libmpv-2.dll is missing. Extract the entire Windows ZIP before opening streamtube.exe, or use the Windows installer.";
+pub(super) const MISSING_WINDOWS_MPV: &str = "libmpv-2.dll is missing. Extract the entire Windows ZIP before opening streamtube.exe, or use the Windows installer.";
 
 /// Linux lookup order for libmpv.
 ///
@@ -225,7 +239,10 @@ fn lib() -> Result<&'static (Library, Fns)> {
             candidates.extend(LIBRARY_NAMES.iter().map(|name| d.join(name)));
         }
         #[cfg(windows)]
-        candidates.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/third_party/mpv/libmpv-2.dll")));
+        candidates.push(PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/third_party/mpv/libmpv-2.dll"
+        )));
         #[cfg(not(target_os = "linux"))]
         candidates.extend(LIBRARY_NAMES.iter().map(PathBuf::from));
         open_library(candidates)
@@ -245,7 +262,8 @@ fn open_library(candidates: impl IntoIterator<Item = PathBuf>) -> Result<(Librar
                 Ok(l) => {
                     macro_rules! sym {
                         ($n:literal) => {
-                            *l.get(concat!($n, "\0").as_bytes()).map_err(|e| e.to_string())?
+                            *l.get(concat!($n, "\0").as_bytes())
+                                .map_err(|e| e.to_string())?
                         };
                     }
                     let fns = Fns {
@@ -273,7 +291,12 @@ fn open_library(candidates: impl IntoIterator<Item = PathBuf>) -> Result<(Librar
                     };
                     if crate::perf::on() {
                         let v = (fns.client_api_version)();
-                        eprintln!("[mpv] loaded {} (client API {}.{})", c.display(), v >> 16, v & 0xffff);
+                        eprintln!(
+                            "[mpv] loaded {} (client API {}.{})",
+                            c.display(),
+                            v >> 16,
+                            v & 0xffff
+                        );
                     }
                     return Ok((l, fns));
                 }
@@ -302,8 +325,12 @@ mod windows_loader_tests {
 
     #[test]
     fn missing_dll_explains_how_to_open_the_portable_app() {
-        let path = crate::store::data_dir().join("missing-test-engine").join("libmpv-2.dll");
-        let error = open_library([path]).err().expect("missing playback library");
+        let path = crate::store::data_dir()
+            .join("missing-test-engine")
+            .join("libmpv-2.dll");
+        let error = open_library([path])
+            .err()
+            .expect("missing playback library");
         assert_eq!(error, MISSING_WINDOWS_MPV);
     }
 
@@ -311,7 +338,9 @@ mod windows_loader_tests {
     fn existing_dll_keeps_the_windows_loader_error() {
         let path = crate::store::data_dir().join("invalid-test-engine.dll");
         std::fs::write(&path, b"invalid DLL").unwrap();
-        let error = open_library([path.clone()]).err().expect("invalid playback library");
+        let error = open_library([path.clone()])
+            .err()
+            .expect("invalid playback library");
         assert!(error.contains(&*path.to_string_lossy()));
         assert!(error.contains("193"), "{error}");
     }
@@ -336,7 +365,9 @@ mod linux_loader_tests {
     }
 
     fn pos(candidates: &[PathBuf], name: &str) -> usize {
-        candidates.iter().position(|p| p.file_name().is_some_and(|n| n.to_str() == Some(name)))
+        candidates
+            .iter()
+            .position(|p| p.file_name().is_some_and(|n| n.to_str() == Some(name)))
             .unwrap_or_else(|| panic!("{name} missing: {candidates:?}"))
     }
 
@@ -369,7 +400,10 @@ mod linux_loader_tests {
     fn without_a_bundled_library_the_plain_names_keep_their_order() {
         assert_eq!(
             linux_candidates(None),
-            ["libmpv.so.2", "libmpv.so.1", "libmpv.so"].iter().map(PathBuf::from).collect::<Vec<_>>()
+            ["libmpv.so.2", "libmpv.so.1", "libmpv.so"]
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
         );
     }
 }
@@ -389,13 +423,28 @@ unsafe fn preload_vulkan_loader() {
     }
     // system copy (System32), never one from the current directory
     let sys = std::env::var_os("SystemRoot")
-        .map(|r| std::path::PathBuf::from(r).join("System32").join("vulkan-1.dll"))
+        .map(|r| {
+            std::path::PathBuf::from(r)
+                .join("System32")
+                .join("vulkan-1.dll")
+        })
         .filter(|p| p.is_file());
     if sys.is_some() {
         return;
     }
-    let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) else { return };
-    for p in [dir.join("vulkan").join("vulkan-1.dll"), std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/third_party/vulkan/vulkan-1.dll"))] {
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.to_path_buf()))
+    else {
+        return;
+    };
+    for p in [
+        dir.join("vulkan").join("vulkan-1.dll"),
+        std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/third_party/vulkan/vulkan-1.dll"
+        )),
+    ] {
         if p.is_file() {
             if let Ok(l) = unsafe { Library::new(&p) } {
                 // stays loaded for the life of the process
@@ -425,7 +474,10 @@ pub enum PropValue {
     Double(f64),
     Flag(bool),
     Str(String),
-    Cache { ranges: Vec<(f64, f64)>, disk_bytes: u64 },
+    Cache {
+        ranges: Vec<(f64, f64)>,
+        disk_bytes: u64,
+    },
 }
 
 const OBSERVED: &[(&str, c_int)] = &[
@@ -510,7 +562,10 @@ struct Block([u8; 64]);
 
 impl Mpv {
     /// Creates a player. `events` receives property changes and frame notifications.
-    pub fn new(options: &[(&str, &str)], events: impl Fn(MpvEvent) + Send + Sync + 'static) -> Result<Arc<Self>> {
+    pub fn new(
+        options: &[(&str, &str)],
+        events: impl Fn(MpvEvent) + Send + Sync + 'static,
+    ) -> Result<Arc<Self>> {
         let (_, f) = lib()?;
         let events = Arc::new(events);
         unsafe {
@@ -543,8 +598,14 @@ impl Mpv {
             // render context
             let api = CString::new("sw")?;
             let mut params = [
-                mpv_render_param { kind: RP_API_TYPE, data: api.as_ptr() as *mut c_void },
-                mpv_render_param { kind: 0, data: std::ptr::null_mut() },
+                mpv_render_param {
+                    kind: RP_API_TYPE,
+                    data: api.as_ptr() as *mut c_void,
+                },
+                mpv_render_param {
+                    kind: 0,
+                    data: std::ptr::null_mut(),
+                },
             ];
             let mut rctx: *mut mpv_render_context = std::ptr::null_mut();
             let rc = (f.rc_create)(&mut rctx, h, params.as_mut_ptr());
@@ -552,10 +613,18 @@ impl Mpv {
                 (f.terminate_destroy)(h);
                 return Err(anyhow!("render context: {}", err_str(rc)));
             }
-            (f.rc_set_update_callback)(rctx, Some(on_render_update), Arc::as_ptr(&render) as *mut c_void);
+            (f.rc_set_update_callback)(
+                rctx,
+                Some(on_render_update),
+                Arc::as_ptr(&render) as *mut c_void,
+            );
 
             let handle = Arc::new(Handle(h));
-            let mpv = Arc::new(Mpv { h: handle.clone(), render: render.clone(), threads: Mutex::new(Vec::new()) });
+            let mpv = Arc::new(Mpv {
+                h: handle.clone(),
+                render: render.clone(),
+                threads: Mutex::new(Vec::new()),
+            });
 
             // event thread
             let ev_handle = handle.clone();
@@ -633,95 +702,136 @@ impl Mpv {
             let r = render.clone();
             let frame_cb = events.clone();
             let rc_ptr = RenderCtx(rctx);
-            let t2 = std::thread::Builder::new().name("mpv-render".into()).spawn(move || {
-                let rc_ptr = rc_ptr;
-                let (_, f) = lib().unwrap();
-                let mut buf: Vec<Block> = Vec::new();
-                let mut last_size = (0u32, 0u32);
-                let fmt = CString::new("bgr0").unwrap();
-                loop {
-                    {
-                        let mut w = r.wake.lock();
-                        while !*w && !r.stop.load(Ordering::Relaxed) {
-                            r.cv.wait(&mut w);
+            let t2 = std::thread::Builder::new()
+                .name("mpv-render".into())
+                .spawn(move || {
+                    let rc_ptr = rc_ptr;
+                    let (_, f) = lib().unwrap();
+                    let mut buf: Vec<Block> = Vec::new();
+                    let mut last_size = (0u32, 0u32);
+                    let fmt = CString::new("bgr0").unwrap();
+                    loop {
+                        {
+                            let mut w = r.wake.lock();
+                            while !*w && !r.stop.load(Ordering::Relaxed) {
+                                r.cv.wait(&mut w);
+                            }
+                            *w = false;
                         }
-                        *w = false;
-                    }
-                    if r.stop.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let flags = (f.rc_update)(rc_ptr.0);
-                    let forced = r.force.swap(false, Ordering::Relaxed);
-                    if flags & RENDER_UPDATE_FRAME == 0 && !forced {
-                        continue;
-                    }
-                    let (tw, th) = *r.target.lock();
-                    let w = ((tw.max(16) + 15) / 16) * 16;
-                    let h = th.max(16);
-                    let stride = w as usize * 4;
-                    let bytes = stride * h as usize;
-                    let blocks = bytes.div_ceil(64);
-                    if (w, h) != last_size {
-                        // a new size reinterprets the old pixels at a different stride, which
-                        // shows up as streaks until mpv has a frame to draw: start from black
-                        last_size = (w, h);
-                        buf.clear();
-                        buf.resize(blocks, Block([0; 64]));
-                    }
-                    let mut size = [w as c_int, h as c_int];
-                    let mut stride_v: usize = stride;
-                    let mut no_block: c_int = 0;
-                    let mut params = [
-                        mpv_render_param { kind: RP_SW_SIZE, data: size.as_mut_ptr() as *mut c_void },
-                        mpv_render_param { kind: RP_SW_FORMAT, data: fmt.as_ptr() as *mut c_void },
-                        mpv_render_param { kind: RP_SW_STRIDE, data: &mut stride_v as *mut usize as *mut c_void },
-                        mpv_render_param { kind: RP_SW_POINTER, data: buf.as_mut_ptr() as *mut c_void },
-                        mpv_render_param { kind: RP_BLOCK_FOR_TARGET_TIME, data: &mut no_block as *mut c_int as *mut c_void },
-                        mpv_render_param { kind: 0, data: std::ptr::null_mut() },
-                    ];
-                    let t0 = std::time::Instant::now();
-                    let mut info = RenderFrameInfo::default();
-                    let param = mpv_render_param { kind: RP_NEXT_FRAME_INFO, data: (&mut info as *mut RenderFrameInfo).cast() };
-                    let info_result = (f.rc_get_info)(rc_ptr.0, param);
-                    let rc = (f.rc_render)(rc_ptr.0, params.as_mut_ptr());
-                    crate::perf::add(&crate::perf::MPV_RENDER_US, t0.elapsed().as_micros() as u64);
-                    crate::perf::add(&crate::perf::MPV_FRAMES, 1);
-                    if rc < 0 {
-                        continue;
-                    }
-                    // one pass: copy each pixel out with its padding byte set to opaque
-                    // (the buffer is 64-byte aligned, so reading it as u32 is fine)
-                    let src = std::slice::from_raw_parts(buf.as_ptr() as *const u32, bytes / 4);
-                    let opaque = u32::from_ne_bytes([0, 0, 0, 0xFF]);
-                    // a frame the UI never picked up gives its buffer back; otherwise a
-                    // fresh one, written once (not zeroed first: ~8 MB a frame at 1080p)
-                    let mut data = r.frame.lock().take().map(|f| f.data).filter(|d| d.capacity() >= bytes).unwrap_or_default();
-                    data.clear();
-                    data.reserve_exact(bytes);
-                    for (d, s) in data.spare_capacity_mut()[..bytes].chunks_exact_mut(4).zip(src) {
-                        for (o, b) in d.iter_mut().zip((s | opaque).to_ne_bytes()) {
-                            o.write(b);
+                        if r.stop.load(Ordering::Relaxed) {
+                            break;
                         }
+                        let flags = (f.rc_update)(rc_ptr.0);
+                        let forced = r.force.swap(false, Ordering::Relaxed);
+                        if flags & RENDER_UPDATE_FRAME == 0 && !forced {
+                            continue;
+                        }
+                        let (tw, th) = *r.target.lock();
+                        let w = ((tw.max(16) + 15) / 16) * 16;
+                        let h = th.max(16);
+                        let stride = w as usize * 4;
+                        let bytes = stride * h as usize;
+                        let blocks = bytes.div_ceil(64);
+                        if (w, h) != last_size {
+                            // a new size reinterprets the old pixels at a different stride, which
+                            // shows up as streaks until mpv has a frame to draw: start from black
+                            last_size = (w, h);
+                            buf.clear();
+                            buf.resize(blocks, Block([0; 64]));
+                        }
+                        let mut size = [w as c_int, h as c_int];
+                        let mut stride_v: usize = stride;
+                        let mut no_block: c_int = 0;
+                        let mut params = [
+                            mpv_render_param {
+                                kind: RP_SW_SIZE,
+                                data: size.as_mut_ptr() as *mut c_void,
+                            },
+                            mpv_render_param {
+                                kind: RP_SW_FORMAT,
+                                data: fmt.as_ptr() as *mut c_void,
+                            },
+                            mpv_render_param {
+                                kind: RP_SW_STRIDE,
+                                data: &mut stride_v as *mut usize as *mut c_void,
+                            },
+                            mpv_render_param {
+                                kind: RP_SW_POINTER,
+                                data: buf.as_mut_ptr() as *mut c_void,
+                            },
+                            mpv_render_param {
+                                kind: RP_BLOCK_FOR_TARGET_TIME,
+                                data: &mut no_block as *mut c_int as *mut c_void,
+                            },
+                            mpv_render_param {
+                                kind: 0,
+                                data: std::ptr::null_mut(),
+                            },
+                        ];
+                        let t0 = std::time::Instant::now();
+                        let mut info = RenderFrameInfo::default();
+                        let param = mpv_render_param {
+                            kind: RP_NEXT_FRAME_INFO,
+                            data: (&mut info as *mut RenderFrameInfo).cast(),
+                        };
+                        let info_result = (f.rc_get_info)(rc_ptr.0, param);
+                        let rc = (f.rc_render)(rc_ptr.0, params.as_mut_ptr());
+                        crate::perf::add(
+                            &crate::perf::MPV_RENDER_US,
+                            t0.elapsed().as_micros() as u64,
+                        );
+                        crate::perf::add(&crate::perf::MPV_FRAMES, 1);
+                        if rc < 0 {
+                            continue;
+                        }
+                        // one pass: copy each pixel out with its padding byte set to opaque
+                        // (the buffer is 64-byte aligned, so reading it as u32 is fine)
+                        let src = std::slice::from_raw_parts(buf.as_ptr() as *const u32, bytes / 4);
+                        let opaque = u32::from_ne_bytes([0, 0, 0, 0xFF]);
+                        // a frame the UI never picked up gives its buffer back; otherwise a
+                        // fresh one, written once (not zeroed first: ~8 MB a frame at 1080p)
+                        let mut data = r
+                            .frame
+                            .lock()
+                            .take()
+                            .map(|f| f.data)
+                            .filter(|d| d.capacity() >= bytes)
+                            .unwrap_or_default();
+                        data.clear();
+                        data.reserve_exact(bytes);
+                        for (d, s) in data.spare_capacity_mut()[..bytes]
+                            .chunks_exact_mut(4)
+                            .zip(src)
+                        {
+                            for (o, b) in d.iter_mut().zip((s | opaque).to_ne_bytes()) {
+                                o.write(b);
+                            }
+                        }
+                        // SAFETY: the loop above wrote all `bytes` bytes (bytes is w*h*4, src has w*h pixels)
+                        data.set_len(bytes);
+                        // Resizing the window and redrawing subtitles can both
+                        // repaint the last picture while the decoder is stuck.
+                        let new_picture = if info_result >= 0 {
+                            info.flags & (FRAME_PRESENT | FRAME_REDRAW | FRAME_REPEAT)
+                                == FRAME_PRESENT
+                        } else {
+                            flags & RENDER_UPDATE_FRAME != 0
+                        };
+                        let picture_serial = if new_picture {
+                            r.presented_frames.fetch_add(1, Ordering::Relaxed) + 1
+                        } else {
+                            r.presented_frames.load(Ordering::Relaxed)
+                        };
+                        *r.frame.lock() = Some(VideoFrame {
+                            width: w,
+                            height: h,
+                            data,
+                            picture_serial,
+                        });
+                        frame_cb(MpvEvent::Frame);
                     }
-                    // SAFETY: the loop above wrote all `bytes` bytes (bytes is w*h*4, src has w*h pixels)
-                    data.set_len(bytes);
-                    // Resizing the window and redrawing subtitles can both
-                    // repaint the last picture while the decoder is stuck.
-                    let new_picture = if info_result >= 0 {
-                        info.flags & (FRAME_PRESENT | FRAME_REDRAW | FRAME_REPEAT) == FRAME_PRESENT
-                    } else {
-                        flags & RENDER_UPDATE_FRAME != 0
-                    };
-                    let picture_serial = if new_picture {
-                        r.presented_frames.fetch_add(1, Ordering::Relaxed) + 1
-                    } else {
-                        r.presented_frames.load(Ordering::Relaxed)
-                    };
-                    *r.frame.lock() = Some(VideoFrame { width: w, height: h, data, picture_serial });
-                    frame_cb(MpvEvent::Frame);
-                }
-                (f.rc_free)(rc_ptr.0);
-            })?;
+                    (f.rc_free)(rc_ptr.0);
+                })?;
             mpv.threads.lock().extend([t1, t2]);
             Ok(mpv)
         }
@@ -756,20 +866,34 @@ impl Mpv {
 
     pub fn command(&self, args: &[&str]) -> Result<()> {
         let (_, f) = lib()?;
-        let cs: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap_or_default()).collect();
+        let cs: Vec<CString> = args
+            .iter()
+            .map(|a| CString::new(*a).unwrap_or_default())
+            .collect();
         let mut ptrs: Vec<*const c_char> = cs.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
         let rc = unsafe { (f.command_async)(self.h.0, 0, ptrs.as_mut_ptr()) };
-        if rc < 0 { Err(anyhow!("mpv command {:?}: {}", args.first(), err_str(rc))) } else { Ok(()) }
+        if rc < 0 {
+            Err(anyhow!("mpv command {:?}: {}", args.first(), err_str(rc)))
+        } else {
+            Ok(())
+        }
     }
 
     pub fn command_sync(&self, args: &[&str]) -> Result<()> {
         let (_, f) = lib()?;
-        let cs: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap_or_default()).collect();
+        let cs: Vec<CString> = args
+            .iter()
+            .map(|a| CString::new(*a).unwrap_or_default())
+            .collect();
         let mut ptrs: Vec<*const c_char> = cs.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
         let rc = unsafe { (f.command)(self.h.0, ptrs.as_mut_ptr()) };
-        if rc < 0 { Err(anyhow!("mpv command {:?}: {}", args.first(), err_str(rc))) } else { Ok(()) }
+        if rc < 0 {
+            Err(anyhow!("mpv command {:?}: {}", args.first(), err_str(rc)))
+        } else {
+            Ok(())
+        }
     }
 
     pub fn set(&self, name: &str, value: &str) {
@@ -786,7 +910,12 @@ impl Mpv {
         if let Ok((_, f)) = lib() {
             let n = CString::new(name).unwrap_or_default();
             unsafe {
-                (f.set_property)(self.h.0, n.as_ptr(), MPV_FORMAT_DOUBLE, &mut value as *mut f64 as *mut c_void);
+                (f.set_property)(
+                    self.h.0,
+                    n.as_ptr(),
+                    MPV_FORMAT_DOUBLE,
+                    &mut value as *mut f64 as *mut c_void,
+                );
             }
         }
     }
@@ -796,7 +925,12 @@ impl Mpv {
             let n = CString::new(name).unwrap_or_default();
             let mut v: c_int = value as c_int;
             unsafe {
-                (f.set_property)(self.h.0, n.as_ptr(), MPV_FORMAT_FLAG, &mut v as *mut c_int as *mut c_void);
+                (f.set_property)(
+                    self.h.0,
+                    n.as_ptr(),
+                    MPV_FORMAT_FLAG,
+                    &mut v as *mut c_int as *mut c_void,
+                );
             }
         }
     }
@@ -805,7 +939,14 @@ impl Mpv {
         let (_, f) = lib().ok()?;
         let n = CString::new(name).ok()?;
         let mut v: f64 = 0.0;
-        let rc = unsafe { (f.get_property)(self.h.0, n.as_ptr(), MPV_FORMAT_DOUBLE, &mut v as *mut f64 as *mut c_void) };
+        let rc = unsafe {
+            (f.get_property)(
+                self.h.0,
+                n.as_ptr(),
+                MPV_FORMAT_DOUBLE,
+                &mut v as *mut f64 as *mut c_void,
+            )
+        };
         (rc >= 0).then_some(v)
     }
 
@@ -813,7 +954,14 @@ impl Mpv {
         let (_, f) = lib().ok()?;
         let n = CString::new(name).ok()?;
         let mut p: *mut c_char = std::ptr::null_mut();
-        let rc = unsafe { (f.get_property)(self.h.0, n.as_ptr(), MPV_FORMAT_STRING, &mut p as *mut *mut c_char as *mut c_void) };
+        let rc = unsafe {
+            (f.get_property)(
+                self.h.0,
+                n.as_ptr(),
+                MPV_FORMAT_STRING,
+                &mut p as *mut *mut c_char as *mut c_void,
+            )
+        };
         if rc < 0 || p.is_null() {
             return None;
         }
@@ -855,6 +1003,10 @@ impl Drop for Mpv {
 fn err_str(rc: c_int) -> String {
     lib()
         .ok()
-        .map(|(_, f)| unsafe { CStr::from_ptr((f.error_string)(rc)).to_string_lossy().into_owned() })
+        .map(|(_, f)| unsafe {
+            CStr::from_ptr((f.error_string)(rc))
+                .to_string_lossy()
+                .into_owned()
+        })
         .unwrap_or_else(|| rc.to_string())
 }

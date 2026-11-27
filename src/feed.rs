@@ -29,12 +29,21 @@ pub fn cached_feed(channel_filter: Option<&[String]>) -> (Vec<VideoItem>, Option
 }
 
 pub fn sort_feed(v: &mut Vec<VideoItem>) {
-    v.sort_by(|a, b| b.published_ts.unwrap_or(0).cmp(&a.published_ts.unwrap_or(0)));
+    v.sort_by(|a, b| {
+        b.published_ts
+            .unwrap_or(0)
+            .cmp(&a.published_ts.unwrap_or(0))
+    });
     let mut seen = std::collections::HashSet::new();
     v.retain(|x| seen.insert(x.id.clone()));
 }
 
-fn fetch_channel(sub: &Subscription, full: bool, shorts: bool, live: bool) -> Option<Vec<VideoItem>> {
+fn fetch_channel(
+    sub: &Subscription,
+    full: bool,
+    shorts: bool,
+    live: bool,
+) -> Option<Vec<VideoItem>> {
     let mut out: Vec<VideoItem> = Vec::new();
     let mut ok = false;
     if full {
@@ -97,13 +106,21 @@ fn fetch_channel(sub: &Subscription, full: bool, shorts: bool, live: bool) -> Op
 }
 
 /// Refreshes the feed for all (or filtered) subscriptions. `progress(done, total)` is called from worker threads.
-pub fn refresh(channel_filter: Option<Vec<String>>, progress: impl Fn(usize, usize) + Send + Sync + 'static) -> (Vec<VideoItem>, usize) {
+pub fn refresh(
+    channel_filter: Option<Vec<String>>,
+    progress: impl Fn(usize, usize) + Send + Sync + 'static,
+) -> (Vec<VideoItem>, usize) {
     let s = store::settings_snapshot();
     let full = s.feed_source != "rss";
     let (shorts, live) = (s.feed_include_shorts && !s.hide_shorts, s.feed_include_live);
     let subs: Vec<Subscription> = store::subscriptions()
         .into_iter()
-        .filter(|x| channel_filter.as_ref().map(|f| f.contains(&x.channel_id)).unwrap_or(true))
+        .filter(|x| {
+            channel_filter
+                .as_ref()
+                .map(|f| f.contains(&x.channel_id))
+                .unwrap_or(true)
+        })
         .collect();
     let total = subs.len();
     let subs = Arc::new(subs);
@@ -114,7 +131,13 @@ pub fn refresh(channel_filter: Option<Vec<String>>, progress: impl Fn(usize, usi
     let workers = 8.min(total.max(1));
     let mut handles = Vec::new();
     for _ in 0..workers {
-        let (subs, next, done, failed, progress) = (subs.clone(), next.clone(), done.clone(), failed.clone(), progress.clone());
+        let (subs, next, done, failed, progress) = (
+            subs.clone(),
+            next.clone(),
+            done.clone(),
+            failed.clone(),
+            progress.clone(),
+        );
         handles.push(std::thread::spawn(move || {
             loop {
                 let i = next.fetch_add(1, Ordering::SeqCst);

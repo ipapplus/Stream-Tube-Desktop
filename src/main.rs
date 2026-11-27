@@ -12,6 +12,7 @@ mod links;
 mod locale;
 #[cfg(windows)]
 mod media_controls;
+mod metrics;
 mod perf;
 mod player;
 mod recommend;
@@ -85,7 +86,10 @@ pub(crate) fn flush_watch_history(cx: &mut App) {
     // The network worker does not depend on the UI thread. GPUI only allows
     // 200 ms for async quit handlers, so wait here with a bounded exit delay.
     if let Some(pending) = api::web::pending_reports() {
-        if pending.recv_timeout(std::time::Duration::from_secs(2)).is_err() {
+        if pending
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .is_err()
+        {
             eprintln!("streamtube: YouTube watch reports did not finish before exit");
         }
     }
@@ -117,7 +121,7 @@ fn main() {
         .run(|cx: &mut App| {
             perf::mark("gpui running");
             gpui_kit::init(cx);
-            i18n::apply_component_locale();
+            i18n::apply_component_locale(cx);
             perf::mark("gpui_kit init");
             player::preview::init(cx);
             perf::mark("preview init");

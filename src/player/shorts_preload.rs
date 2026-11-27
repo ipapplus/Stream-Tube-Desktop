@@ -81,7 +81,9 @@ pub fn clear() {
 }
 
 pub fn update(feed: &[VideoItem], quality: u32, audio_only: bool, ready: bool) {
-    let ahead = crate::store::settings_snapshot().shorts_preload.min(MAX_AHEAD) as usize;
+    let ahead = crate::store::settings_snapshot()
+        .shorts_preload
+        .min(MAX_AHEAD) as usize;
     if ahead == 0 || feed.is_empty() {
         clear();
         return;
@@ -96,7 +98,8 @@ pub fn update(feed: &[VideoItem], quality: u32, audio_only: bool, ready: bool) {
         s.quality = quality;
         s.audio_only = audio_only;
     }
-    s.videos.retain(|id, _| id == current || next.iter().any(|v| v.id == *id));
+    s.videos
+        .retain(|id, _| id == current || next.iter().any(|v| v.id == *id));
     if !s.upcoming.iter().eq(next.iter().map(|v| &v.id)) {
         s.upcoming = next.iter().map(|v| v.id.clone()).collect();
     }
@@ -214,7 +217,9 @@ impl Download {
         if !self.can_fetch() || !url.starts_with("https://") {
             return None;
         }
-        let mut req = proxy::agent().get(url).header("User-Agent", crate::api::http::BROWSER_UA);
+        let mut req = proxy::agent()
+            .get(url)
+            .header("User-Agent", crate::api::http::BROWSER_UA);
         if prefix {
             req = req.header("Range", &format!("bytes=0-{}", limit - 1));
         }
@@ -229,7 +234,10 @@ impl Download {
                     .ok()?
                     .strip_prefix("bytes 0-")?
                     .split_once('/')?;
-                Some((end.parse::<u64>().ok()?.checked_add(1)?, total.parse::<u64>().ok()?))
+                Some((
+                    end.parse::<u64>().ok()?.checked_add(1)?,
+                    total.parse::<u64>().ok()?,
+                ))
             }
             _ => return None,
         };
@@ -339,7 +347,12 @@ pub(super) fn hls_opening_seconds(url: &str, quality: u32, audio: Option<&str>) 
     if let Some(seconds) = master.opening_seconds {
         return Some(seconds);
     }
-    let selected = proxy::select_master(std::str::from_utf8(&master.bytes).ok()?, quality, audio, false)?;
+    let selected = proxy::select_master(
+        std::str::from_utf8(&master.bytes).ok()?,
+        quality,
+        audio,
+        false,
+    )?;
     let mut seconds = f64::INFINITY;
     for uri in rendition_uris(&selected) {
         seconds = seconds.min(cached(&proxy::playlist_url(url, &uri)?)?.opening_seconds?);
@@ -361,7 +374,8 @@ fn preload(id: &str, assets: Weak<Assets>, quality: u32, audio_only: bool) -> Op
         streams::PlaybackStream::Hls(url) => {
             let master = download.playlist(url)?;
             let audio = streams::hls_audio_choice(&info, None);
-            if let Some(selected) = proxy::select_master(&master, quality, audio.as_deref(), false) {
+            if let Some(selected) = proxy::select_master(&master, quality, audio.as_deref(), false)
+            {
                 for uri in rendition_uris(&selected) {
                     let variant = proxy::playlist_url(url, &uri)?;
                     download.opening_segments(&variant, &download.playlist(&variant)?)?;

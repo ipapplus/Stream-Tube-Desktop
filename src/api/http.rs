@@ -6,8 +6,7 @@ use std::time::Duration;
 use ureq::config::{ConfigBuilder, IpFamily};
 use ureq::typestate::AgentScope;
 
-pub const BROWSER_UA: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+pub const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -103,7 +102,9 @@ mod tests {
         let url = format!("http://{}/download", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
             let mut request = BufReader::new(&mut stream);
             let mut line = String::new();
             loop {
@@ -113,7 +114,9 @@ mod tests {
                     break;
                 }
             }
-            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\ns").unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\ns")
+                .unwrap();
             for byte in b"low!" {
                 std::thread::sleep(Duration::from_secs(8));
                 stream.write_all(&[*byte]).unwrap();
@@ -126,7 +129,8 @@ mod tests {
             assert!(done > progress);
             progress = done;
             true
-        }).unwrap();
+        })
+        .unwrap();
         server.join().unwrap();
         assert_eq!(bytes, b"slow!");
         assert_eq!(progress, 5);
@@ -145,18 +149,27 @@ mod tests {
         let url = format!("http://{}/stats", redirect.local_addr().unwrap());
         let server = std::thread::spawn(move || {
             let (mut stream, _) = redirect.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
             for line in BufReader::new(&stream).lines() {
                 if line.unwrap().is_empty() {
                     break;
                 }
             }
-            write!(stream, "HTTP/1.1 302 Found\r\nLocation: http://{target}/other\r\nContent-Length: 0\r\n\r\n").unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: http://{target}/other\r\nContent-Length: 0\r\n\r\n"
+            )
+            .unwrap();
         });
         let status = super::tracking_status(&url, &[("Cookie", "test=synthetic")]).unwrap();
         assert_eq!(status, 302);
         server.join().unwrap();
-        assert_eq!(destination.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        assert_eq!(
+            destination.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 }
 
@@ -185,8 +198,12 @@ pub fn get_text(url: &str) -> Result<String> {
 
 /// Playback tracking URLs carry account data. Do not forward their headers to
 /// redirects, and keep the reporter's network wait bounded.
-pub(super) fn tracking_status(url: &str, headers: &[(&str, &str)]) -> std::result::Result<u16, ureq::Error> {
-    let mut req = agent().get(url)
+pub(super) fn tracking_status(
+    url: &str,
+    headers: &[(&str, &str)],
+) -> std::result::Result<u16, ureq::Error> {
+    let mut req = agent()
+        .get(url)
         .config()
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(2)))
@@ -204,7 +221,10 @@ pub fn get_json(url: &str) -> Result<Value> {
 
 /// Returns (status, json)
 pub fn get_json_status(url: &str) -> Result<(u16, Value)> {
-    let mut resp = agent().get(url).header("Accept", "application/json").call()?;
+    let mut resp = agent()
+        .get(url)
+        .header("Accept", "application/json")
+        .call()?;
     let status = resp.status().as_u16();
     let text = resp.body_mut().read_to_string().unwrap_or_default();
     Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
@@ -225,7 +245,10 @@ pub fn post_json(url: &str, body: &Value, headers: &[(&str, &str)]) -> Result<Va
         .limit(64 * 1024 * 1024)
         .read_to_string()?;
     if status >= 400 {
-        return Err(anyhow!("HTTP {status}: {}", text.chars().take(300).collect::<String>()));
+        return Err(anyhow!(
+            "HTTP {status}: {}",
+            text.chars().take(300).collect::<String>()
+        ));
     }
     serde_json::from_str(&text).context("invalid json")
 }
@@ -235,7 +258,11 @@ pub fn post_json_status(url: &str, body: &Value, headers: &[(&str, &str)]) -> Re
     send_json_status(agent().post(url), body, headers)
 }
 
-pub(super) fn post_session_json(url: &str, body: &Value, headers: &[(&str, &str)]) -> Result<(u16, Value)> {
+pub(super) fn post_session_json(
+    url: &str,
+    body: &Value,
+    headers: &[(&str, &str)],
+) -> Result<(u16, Value)> {
     let request = agent().post(url).config().max_redirects(0).build();
     send_json_status(request, body, headers)
 }
@@ -251,7 +278,11 @@ fn send_json_status(
     }
     let mut resp = req.send(serde_json::to_vec(body)?)?;
     let status = resp.status().as_u16();
-    let text = resp.body_mut().with_config().limit(64 * 1024 * 1024).read_to_string()?;
+    let text = resp
+        .body_mut()
+        .with_config()
+        .limit(64 * 1024 * 1024)
+        .read_to_string()?;
     Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
 }
 
@@ -302,7 +333,9 @@ pub fn urlencode(s: &str) -> String {
     let mut o = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                o.push(b as char)
+            }
             _ => o.push_str(&format!("%{b:02X}")),
         }
     }
@@ -317,7 +350,8 @@ pub fn urldecode(s: &str) -> String {
     while i < b.len() {
         match b[i] {
             b'%' if i + 2 < b.len() => {
-                match u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("zz"), 16) {
+                match u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("zz"), 16)
+                {
                     Ok(v) => {
                         out.push(v);
                         i += 3;

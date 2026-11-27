@@ -74,10 +74,14 @@ impl Account {
     /// own player's `signatureTimestamp`: the web player's for a browser session,
     /// the TV player's for the TV sign-in.
     pub(super) fn player_response(&self, video_id: &str) -> Result<Value> {
-        anyhow::ensure!(self.if_current(|| ()).is_some(), "YouTube history account changed");
+        anyhow::ensure!(
+            self.if_current(|| ()).is_some(),
+            "YouTube history account changed"
+        );
         match &self.0 {
             Session::Web(s) => {
-                let mut body = json!({ "videoId": video_id, "racyCheckOk": true, "contentCheckOk": true });
+                let mut body =
+                    json!({ "videoId": video_id, "racyCheckOk": true, "contentCheckOk": true });
                 if let Some(sts) = super::web::reporting::sts() {
                     body["playbackContext"] = json!({ "contentPlaybackContext": { "signatureTimestamp": sts, "html5Preference": "HTML5_PREF_WANTS" } });
                 }

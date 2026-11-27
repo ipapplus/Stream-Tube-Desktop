@@ -13,18 +13,24 @@ pub struct PipView {
 }
 
 pub fn handle(cx: &App) -> Option<AnyWindowHandle> {
-    cx.try_global::<PipWindow>().and_then(|p| p.0.as_ref().map(|(handle, _)| *handle))
+    cx.try_global::<PipWindow>()
+        .and_then(|p| p.0.as_ref().map(|(handle, _)| *handle))
 }
 
 pub(crate) fn owner(cx: &App) -> Option<Entity<Player>> {
-    cx.try_global::<PipWindow>().and_then(|p| p.0.as_ref().map(|(_, player)| player.clone()))
+    cx.try_global::<PipWindow>()
+        .and_then(|p| p.0.as_ref().map(|(_, player)| player.clone()))
 }
 
 pub fn open(cx: &mut App) {
     let active = player(cx);
     if let Some(h) = handle(cx) {
         if owner(cx).as_ref() == Some(&active) {
-            if h.update(cx, |_, window, _| window.activate_window()).is_ok() { return; }
+            if h.update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+            {
+                return;
+            }
         } else {
             let _ = h.update(cx, |_, window, cx| close(window, cx));
         }

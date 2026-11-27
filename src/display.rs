@@ -35,7 +35,9 @@ pub fn choose() {
         // only one of them is available: nothing to choose
         return;
     }
-    let forced = std::env::var("STREAMTUBE_BACKEND").unwrap_or_default().to_lowercase();
+    let forced = std::env::var("STREAMTUBE_BACKEND")
+        .unwrap_or_default()
+        .to_lowercase();
     let setting = crate::store::settings_snapshot().display_server.clone();
     let use_x11 = match forced.as_str() {
         "x11" => true,
@@ -56,9 +58,13 @@ pub fn choose() {
         if DRAWN.load(Ordering::Relaxed) {
             return;
         }
-        eprintln!("Stream Tube: the Wayland window didn't appear; restarting on X11 (Settings → Backend & network → Display server)");
+        eprintln!(
+            "Stream Tube: the Wayland window didn't appear; restarting on X11 (Settings → Backend & network → Display server)"
+        );
         crate::store::update_settings(|s| s.display_server = "x11".into());
-        let Ok(exe) = std::env::current_exe() else { return };
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
         let started = std::process::Command::new(exe)
             .args(std::env::args_os().skip(1))
             .env_remove("WAYLAND_DISPLAY")
@@ -76,5 +82,6 @@ pub fn choose() {}
 /// ChromeOS runs Linux apps in a container that has this folder.
 #[cfg(target_os = "linux")]
 fn in_chromeos() -> bool {
-    std::path::Path::new("/opt/google/cros-containers").is_dir() || std::env::var_os("SOMMELIER_VERSION").is_some()
+    std::path::Path::new("/opt/google/cros-containers").is_dir()
+        || std::env::var_os("SOMMELIER_VERSION").is_some()
 }

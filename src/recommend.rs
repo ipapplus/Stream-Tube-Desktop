@@ -18,12 +18,16 @@ static CACHE: Mutex<Option<(Vec<Item>, Instant, u64)>> = Mutex::new(None);
 
 /// Whether there's anything to base recommendations on.
 pub fn available() -> bool {
-    crate::store::settings_snapshot().history_enabled && !crate::store::history_list("", 1).is_empty()
+    crate::store::settings_snapshot().history_enabled
+        && !crate::store::history_list("", 1).is_empty()
 }
 
 /// A fingerprint of the newest history entries, so a fresh watch rebuilds the feed.
 fn history_mark() -> u64 {
-    crate::store::history_list("", 3).iter().map(|h| h.watched_at as u64).sum()
+    crate::store::history_list("", 3)
+        .iter()
+        .map(|h| h.watched_at as u64)
+        .sum()
 }
 
 /// Videos related to the local watch and search history, newest interests first,
@@ -46,26 +50,48 @@ pub fn for_you() -> Vec<Item> {
         .iter()
         .map(|h| &h.video)
         .filter(|v| !v.is_short)
-        .filter(|v| channels.insert(v.channel_id.clone().unwrap_or_else(|| v.channel_name.clone())))
+        .filter(|v| {
+            channels.insert(
+                v.channel_id
+                    .clone()
+                    .unwrap_or_else(|| v.channel_name.clone()),
+            )
+        })
         .collect();
-    let mut seeds: Vec<String> = longs.iter().take(RECENT_SEEDS).map(|v| v.id.clone()).collect();
+    let mut seeds: Vec<String> = longs
+        .iter()
+        .take(RECENT_SEEDS)
+        .map(|v| v.id.clone())
+        .collect();
     {
         use rand::seq::IndexedRandom;
         let older: Vec<&&VideoItem> = longs.iter().skip(RECENT_SEEDS).collect();
-        seeds.extend(older.choose_multiple(&mut rand::rng(), OLDER_SEEDS).map(|v| v.id.clone()));
+        seeds.extend(
+            older
+                .choose_multiple(&mut rand::rng(), OLDER_SEEDS)
+                .map(|v| v.id.clone()),
+        );
     }
     let queries = crate::store::search_history("", SEARCHES);
     let lists: Vec<Vec<VideoItem>> = std::thread::scope(|s| {
         let mut hs = Vec::new();
         for id in &seeds {
-            hs.push(s.spawn(move || innertube::watch_next(id, None).map(|w| videos(w.related)).unwrap_or_default()));
+            hs.push(s.spawn(move || {
+                innertube::watch_next(id, None)
+                    .map(|w| videos(w.related))
+                    .unwrap_or_default()
+            }));
         }
         for q in &queries {
             hs.push(s.spawn(move || {
-                innertube::search(q, &Default::default()).map(|p| videos(p.items).into_iter().take(8).collect()).unwrap_or_default()
+                innertube::search(q, &Default::default())
+                    .map(|p| videos(p.items).into_iter().take(8).collect())
+                    .unwrap_or_default()
             }));
         }
-        hs.into_iter().map(|h| h.join().unwrap_or_default()).collect()
+        hs.into_iter()
+            .map(|h| h.join().unwrap_or_default())
+            .collect()
     });
     // round robin across the lists, so every interest shows up near the top
     let mut out = Vec::new();

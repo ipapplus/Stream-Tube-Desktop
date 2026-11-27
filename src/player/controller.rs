@@ -1,9 +1,9 @@
 //! Player controller: owns the mpv instance, stream selection, SponsorBlock, queue and progress.
 use super::mpv::{Mpv, MpvEvent, PropValue};
-use crate::i18n::{t as translate, tf};
 use crate::api::services::{self, Segment};
 use crate::api::streams;
 use crate::api::types::*;
+use crate::i18n::{t as translate, tf};
 use crate::store;
 use crate::ui::{blocking, toast};
 use gpui_kit::*;
@@ -20,7 +20,12 @@ struct FrameProgress {
 
 impl FrameProgress {
     fn new(presented: u64, position: f64) -> Self {
-        Self { presented, position, since: Instant::now(), min_advance: 3.0 }
+        Self {
+            presented,
+            position,
+            since: Instant::now(),
+            min_advance: 3.0,
+        }
     }
 }
 
@@ -128,7 +133,10 @@ pub fn player(cx: &App) -> Entity<Player> {
 
 pub fn init(cx: &mut App) {
     let active = cx.new(Player::new);
-    cx.set_global(PlayerHandle { tabs: vec![active.downgrade()], active });
+    cx.set_global(PlayerHandle {
+        tabs: vec![active.downgrade()],
+        active,
+    });
 }
 
 pub(crate) fn new_tab_player(cx: &mut App) -> Entity<Player> {
@@ -144,7 +152,11 @@ pub(crate) fn set_active_player(player: Entity<Player>, cx: &mut App) {
 }
 
 pub(crate) fn tab_players(cx: &App) -> Vec<Entity<Player>> {
-    cx.global::<PlayerHandle>().tabs.iter().filter_map(WeakEntity::upgrade).collect()
+    cx.global::<PlayerHandle>()
+        .tabs
+        .iter()
+        .filter_map(WeakEntity::upgrade)
+        .collect()
 }
 
 pub fn enqueue(v: VideoItem, cx: &mut App) {
@@ -168,18 +180,42 @@ pub fn enqueue(v: VideoItem, cx: &mut App) {
 
 pub const EQ_PRESETS: &[(&str, &str, &str)] = &[
     ("flat", "Flat", ""),
-    ("bass", "Bass boost", "equalizer=f=60:width_type=o:w=1.5:g=6,equalizer=f=150:width_type=o:w=1.5:g=4"),
-    ("voice", "Voice", "equalizer=f=300:width_type=o:w=1.5:g=-3,equalizer=f=1500:width_type=o:w=2:g=4,equalizer=f=3500:width_type=o:w=1.5:g=3"),
-    ("treble", "Treble boost", "equalizer=f=4000:width_type=o:w=1.5:g=4,equalizer=f=10000:width_type=o:w=1.5:g=6"),
-    ("warm", "Warm", "equalizer=f=100:width_type=o:w=1.5:g=3,equalizer=f=8000:width_type=o:w=1.5:g=-3"),
+    (
+        "bass",
+        "Bass boost",
+        "equalizer=f=60:width_type=o:w=1.5:g=6,equalizer=f=150:width_type=o:w=1.5:g=4",
+    ),
+    (
+        "voice",
+        "Voice",
+        "equalizer=f=300:width_type=o:w=1.5:g=-3,equalizer=f=1500:width_type=o:w=2:g=4,equalizer=f=3500:width_type=o:w=1.5:g=3",
+    ),
+    (
+        "treble",
+        "Treble boost",
+        "equalizer=f=4000:width_type=o:w=1.5:g=4,equalizer=f=10000:width_type=o:w=1.5:g=6",
+    ),
+    (
+        "warm",
+        "Warm",
+        "equalizer=f=100:width_type=o:w=1.5:g=3,equalizer=f=8000:width_type=o:w=1.5:g=-3",
+    ),
 ];
 
 pub fn eq_label(id: &str) -> &'static str {
-    EQ_PRESETS.iter().find(|&&(k, _, _)| k == id).map(|&(_, l, _)| l).unwrap_or("Flat")
+    EQ_PRESETS
+        .iter()
+        .find(|&&(k, _, _)| k == id)
+        .map(|&(_, l, _)| l)
+        .unwrap_or("Flat")
 }
 
 fn eq_filter(id: &str) -> &'static str {
-    EQ_PRESETS.iter().find(|&&(k, _, _)| k == id).map(|&(_, _, f)| f).unwrap_or("")
+    EQ_PRESETS
+        .iter()
+        .find(|&&(k, _, _)| k == id)
+        .map(|&(_, _, f)| f)
+        .unwrap_or("")
 }
 
 impl Player {
@@ -326,7 +362,14 @@ impl Player {
         let hw = if s.hwdec { "auto-copy" } else { "no" };
         let opts: Vec<(&str, &str)> = vec![
             ("vo", "libmpv"),
-            ("vid", if self.foreground || self.in_pip { "auto" } else { "no" }),
+            (
+                "vid",
+                if self.foreground || self.in_pip {
+                    "auto"
+                } else {
+                    "no"
+                },
+            ),
             ("hwdec", hw),
             ("keep-open", "yes"),
             ("idle", "yes"),
@@ -367,7 +410,10 @@ impl Player {
         ];
         let opts: Vec<(&str, &str)> = opts.into_iter().collect();
         let proxy = s.proxy.clone();
-        let mut opts_owned: Vec<(String, String)> = opts.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let mut opts_owned: Vec<(String, String)> = opts
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
         // Embedded libmpv can have no default cache directory.
         let cache_dir = store::data_dir().join("playback-cache");
         let cache_dir = match std::fs::create_dir_all(&cache_dir) {
@@ -377,7 +423,10 @@ impl Player {
                 std::env::temp_dir()
             }
         };
-        opts_owned.push(("demuxer-cache-dir".into(), cache_dir.to_string_lossy().into_owned()));
+        opts_owned.push((
+            "demuxer-cache-dir".into(),
+            cache_dir.to_string_lossy().into_owned(),
+        ));
         // normal videos reach mpv through the app's local stream proxy, which already
         // uses the user's proxy; mpv itself only fetches live streams directly, and can
         // only use HTTP proxies (127.0.0.1 is excluded through no_proxy, see main)
@@ -387,7 +436,10 @@ impl Player {
         if let Ok(f) = std::env::var("STREAMTUBE_MPV_LOG") {
             opts_owned.push(("log-file".into(), f));
         }
-        let refs: Vec<(&str, &str)> = opts_owned.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        let refs: Vec<(&str, &str)> = opts_owned
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
         match Mpv::new(&refs, move |ev| {
             let _ = tx.unbounded_send(ev);
         }) {
@@ -406,7 +458,9 @@ impl Player {
                         }
                         let ok = this
                             .update(cx, |p, cx| {
-                                if p.engine_generation != generation { return false; }
+                                if p.engine_generation != generation {
+                                    return false;
+                                }
                                 for e in batch {
                                     p.handle_event(e, cx);
                                 }
@@ -425,7 +479,9 @@ impl Player {
                 let error = e.to_string();
                 self.init_error = Some(match error.as_str() {
                     #[cfg(windows)]
-                    super::mpv::MISSING_WINDOWS_MPV => translate(super::mpv::MISSING_WINDOWS_MPV).to_owned(),
+                    super::mpv::MISSING_WINDOWS_MPV => {
+                        translate(super::mpv::MISSING_WINDOWS_MPV).to_owned()
+                    }
                     _ => tf!("Could not start the video engine (libmpv): {0}", error),
                 });
                 None
@@ -449,12 +505,16 @@ impl Player {
         match ev {
             MpvEvent::Frame => {
                 if !self.foreground && !self.in_pip {
-                    if let Some(mpv) = &self.mpv { let _ = mpv.take_frame(); }
+                    if let Some(mpv) = &self.mpv {
+                        let _ = mpv.take_frame();
+                    }
                     return;
                 }
                 let t0 = std::time::Instant::now();
                 crate::perf::add(&crate::perf::UI_FRAMES, 1);
-                let _g = scopeguard(move || crate::perf::add(&crate::perf::UI_HANDLE_US, t0.elapsed().as_micros() as u64));
+                let _g = scopeguard(move || {
+                    crate::perf::add(&crate::perf::UI_HANDLE_US, t0.elapsed().as_micros() as u64)
+                });
                 if let Some(m) = &self.mpv {
                     if let Some(f) = m.take_frame() {
                         // A seek or reload can redraw an empty surface before
@@ -466,7 +526,13 @@ impl Player {
                         self.ambient_tick += 1;
                         if self.ambient_tick % 12 == 1 && store::settings_snapshot().ambient_mode {
                             if let Some(c) = average_color(&f.data, f.width, f.height) {
-                                let changed = self.ambient.map(|o| (o.r - c.r).abs() + (o.g - c.g).abs() + (o.b - c.b).abs() > 0.04).unwrap_or(true);
+                                let changed = self
+                                    .ambient
+                                    .map(|o| {
+                                        (o.r - c.r).abs() + (o.g - c.g).abs() + (o.b - c.b).abs()
+                                            > 0.04
+                                    })
+                                    .unwrap_or(true);
                                 if changed {
                                     self.ambient = Some(c);
                                     cx.emit(PlayerEvent::Ambient);
@@ -474,11 +540,17 @@ impl Player {
                             }
                         }
                         // a few looks a second are enough to follow the bars
-                        if self.ambient_tick % 10 == 0 && store::settings_snapshot().aspect_mode == "auto" {
-                            self.auto_crop.feed(super::aspect::detect_bars(&f.data, f.width, f.height));
+                        if self.ambient_tick % 10 == 0
+                            && store::settings_snapshot().aspect_mode == "auto"
+                        {
+                            self.auto_crop
+                                .feed(super::aspect::detect_bars(&f.data, f.width, f.height));
                         }
                         if let Some(buf) = image::RgbaImage::from_raw(f.width, f.height, f.data) {
-                            let img = Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(buf)]));
+                            let img =
+                                Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(
+                                    buf
+                                )]));
                             if let Some(old) = self.frame.replace(img) {
                                 self.old_frames.push(old);
                             }
@@ -504,9 +576,16 @@ impl Player {
             }
             MpvEvent::PlaybackRestart => {
                 self.frame_progress = None;
-                if !self.loading && !self.buffering && self.error.is_none() && self.streams.is_some() {
+                if !self.loading
+                    && !self.buffering
+                    && self.error.is_none()
+                    && self.streams.is_some()
+                {
                     if let Some((action, started)) = self.playback_timing.take() {
-                        eprintln!("[player] {action} to playback restart: {} ms", started.elapsed().as_millis());
+                        eprintln!(
+                            "[player] {action} to playback restart: {} ms",
+                            started.elapsed().as_millis()
+                        );
                     }
                     self.set_playback_ready(true, cx);
                 }
@@ -532,15 +611,23 @@ impl Player {
             MpvEvent::Prop(name, val) => {
                 // While frames are flowing, the frame event already redraws the player;
                 // only redraw for clock/cache updates when no video frames arrive.
-                let quiet = matches!(name, "time-pos" | "demuxer-cache-time" | "demuxer-cache-state")
-                    && !self.paused
+                let quiet = matches!(
+                    name,
+                    "time-pos" | "demuxer-cache-time" | "demuxer-cache-state"
+                ) && !self.paused
                     && !self.audio_only
                     && self.frame.is_some()
                     && self.last_prop_notify.elapsed() < std::time::Duration::from_millis(500);
                 match (name, val) {
                     ("time-pos", PropValue::Double(t)) => {
                         self.time = t;
-                        if t > 0. && self.error.is_none() && !self.loading && !self.buffering && !self.paused && !self.playback_ready {
+                        if t > 0.
+                            && self.error.is_none()
+                            && !self.loading
+                            && !self.buffering
+                            && !self.paused
+                            && !self.playback_ready
+                        {
                             self.set_playback_ready(true, cx);
                         }
                         if !self.recover_stalled_picture(cx) {
@@ -571,14 +658,20 @@ impl Player {
                         self.frame_progress = None;
                     }
                     ("demuxer-cache-time", PropValue::Double(c)) => self.cache_time = c,
-                    ("demuxer-cache-state", PropValue::Cache { ranges, disk_bytes }) if !self.loading && self.streams.is_some() => {
+                    ("demuxer-cache-state", PropValue::Cache { ranges, disk_bytes })
+                        if !self.loading && self.streams.is_some() =>
+                    {
                         self.seek_disk_bytes = self.seek_disk_bytes.max(disk_bytes);
                         if let Some((from, end)) = self.seek_cache_target {
                             // Follow only the range that actually covers our last seek or
                             // refill point. A separate range ahead may itself be shrinking.
-                            let filled = ranges.iter().filter(|&&(a, b)| a <= from && from <= b)
-                                .map(|&(_, b)| b).fold(from, f64::max);
-                            let target = (filled < end && self.seek_disk_bytes < SEEK_DISK_CACHE_LIMIT)
+                            let filled = ranges
+                                .iter()
+                                .filter(|&&(a, b)| a <= from && from <= b)
+                                .map(|&(_, b)| b)
+                                .fold(from, f64::max);
+                            let target = (filled < end
+                                && self.seek_disk_bytes < SEEK_DISK_CACHE_LIMIT)
                                 .then_some((filled, end));
                             self.set_seek_cache_target(target);
                         }
@@ -609,7 +702,11 @@ impl Player {
             return;
         }
         let live = video.is_live || self.streams.as_ref().is_some_and(|info| info.is_live);
-        let position = self.mpv.as_ref().and_then(|mpv| mpv.get_f64("time-pos")).unwrap_or(self.time);
+        let position = self
+            .mpv
+            .as_ref()
+            .and_then(|mpv| mpv.get_f64("time-pos"))
+            .unwrap_or(self.time);
         if !live && premature_eof(position, self.duration) {
             self.time = position;
             self.error = Some("Playback stopped before the end of the video.".into());
@@ -674,18 +771,34 @@ impl Player {
         self.queue_scroll_y = None;
         cx.emit(PlayerEvent::QueueChanged);
         cx.notify();
-        let Some(first) = continuation.filter(|t| !t.is_empty()) else { return };
+        let Some(first) = continuation.filter(|t| !t.is_empty()) else {
+            return;
+        };
         cx.spawn(async move |this, cx| {
-            let mut pager = crate::api::innertube::PlaylistPager::new(Some(first), crate::api::innertube::MAX_PLAYLIST_PAGES);
+            let mut pager = crate::api::innertube::PlaylistPager::new(
+                Some(first),
+                crate::api::innertube::MAX_PLAYLIST_PAGES,
+            );
             while let Some(tok) = pager.take_next() {
-                let Ok((vids, next)) = blocking(move || crate::api::innertube::playlist_continue(&tok, authed)).await else { break };
+                let Ok((vids, next)) =
+                    blocking(move || crate::api::innertube::playlist_continue(&tok, authed)).await
+                else {
+                    break;
+                };
                 pager.advance(next);
                 let keep_going = this
                     .update(cx, |p, cx| {
                         if p.queue_serial != serial {
                             return false;
                         }
-                        if extend_queue(&mut p.queue, p.queue_pos, vids, p.queue_shuffle, &mut rand::rng()) > 0 {
+                        if extend_queue(
+                            &mut p.queue,
+                            p.queue_pos,
+                            vids,
+                            p.queue_shuffle,
+                            &mut rand::rng(),
+                        ) > 0
+                        {
                             cx.emit(PlayerEvent::QueueChanged);
                             cx.notify();
                         }
@@ -749,16 +862,28 @@ impl Player {
     /// A failed video decoder can leave mpv playing the audio indefinitely
     /// without an EndFile event. Compare rendered pictures with the media clock.
     fn recover_stalled_picture(&mut self, cx: &mut Context<Self>) -> bool {
-        let (Some(mpv), Some(info)) = (&self.mpv, &self.streams) else { return false };
-        if !(self.foreground || self.in_pip) || self.audio_only || self.loading || self.paused || self.buffering || self.seeking || self.eof || self.error.is_some()
-            || info.is_live || (!info.hls_only && info.video.is_empty() && info.muxed.is_empty())
+        let (Some(mpv), Some(info)) = (&self.mpv, &self.streams) else {
+            return false;
+        };
+        if !(self.foreground || self.in_pip)
+            || self.audio_only
+            || self.loading
+            || self.paused
+            || self.buffering
+            || self.seeking
+            || self.eof
+            || self.error.is_some()
+            || info.is_live
+            || (!info.hls_only && info.video.is_empty() && info.muxed.is_empty())
             || (self.duration > 0.0 && self.duration - self.time < 2.0)
         {
             self.frame_progress = None;
             return false;
         }
         let presented = mpv.presented_frames();
-        let progress = self.frame_progress.get_or_insert_with(|| FrameProgress::new(presented, self.time));
+        let progress = self
+            .frame_progress
+            .get_or_insert_with(|| FrameProgress::new(presented, self.time));
         if progress.presented != presented || self.time < progress.position {
             *progress = FrameProgress::new(presented, self.time);
             return false;
@@ -773,7 +898,13 @@ impl Player {
             progress.min_advance = 2.0 / fps;
             return false;
         }
-        if ["current-tracks/video/image", "current-tracks/video/albumart"].iter().any(|p| mpv.get_string(p).as_deref() == Some("yes")) {
+        if [
+            "current-tracks/video/image",
+            "current-tracks/video/albumart",
+        ]
+        .iter()
+        .any(|p| mpv.get_string(p).as_deref() == Some("yes"))
+        {
             self.frame_progress = None;
             return false;
         }
@@ -785,7 +916,10 @@ impl Player {
             cx.notify();
         } else {
             self.recovering_picture = true;
-            eprintln!("[player] Video frames stalled while playback advanced. Reopening at {:.1}s with software decoding.", self.time);
+            eprintln!(
+                "[player] Video frames stalled while playback advanced. Reopening at {:.1}s with software decoding.",
+                self.time
+            );
             self.load_current(Some(self.time), true, cx);
         }
         true
@@ -806,7 +940,9 @@ impl Player {
             }
             let id = self.video.as_ref().map(|v| v.id.clone());
             if let Some(id) = id {
-                cx.default_global::<crate::ui::cards::Watched>().0.insert(id, (t, self.duration));
+                cx.default_global::<crate::ui::cards::Watched>()
+                    .0
+                    .insert(id, (t, self.duration));
             }
         }
         // SponsorBlock
@@ -817,7 +953,11 @@ impl Player {
         let mut prompt = None;
         let mut in_mute = false;
         for seg in self.segments.clone() {
-            let action = s.sb_actions.get(&seg.category).map(String::as_str).unwrap_or("off");
+            let action = s
+                .sb_actions
+                .get(&seg.category)
+                .map(String::as_str)
+                .unwrap_or("off");
             if action == "off" || seg.action == "poi" || seg.action == "full" {
                 continue;
             }
@@ -842,23 +982,32 @@ impl Player {
                     std::thread::spawn(move || services::sponsor_viewed(&server, &uuid));
                     if s.sb_notify {
                         let weak = cx.entity().downgrade();
-                        let mut actions: Vec<(SharedString, Arc<dyn Fn(&mut Window, &mut App)>)> = vec![(
-                            translate("Unskip").into(),
-                            Arc::new(move |_, cx: &mut App| {
-                                if let Some(p) = weak.upgrade() {
-                                    p.update(cx, |p, _| p.seek_to(back_to));
-                                }
-                            }),
-                        )];
+                        let mut actions: Vec<(SharedString, Arc<dyn Fn(&mut Window, &mut App)>)> =
+                            vec![(
+                                translate("Unskip").into(),
+                                Arc::new(move |_, cx: &mut App| {
+                                    if let Some(p) = weak.upgrade() {
+                                        p.update(cx, |p, _| p.seek_to(back_to));
+                                    }
+                                }),
+                            )];
                         if !s.sb_user_id.is_empty() {
                             for (label, up) in [("Upvote", true), ("Downvote", false)] {
-                                let (server, uuid, user) = (s.sponsorblock_server.clone(), seg.uuid.clone(), s.sb_user_id.clone());
+                                let (server, uuid, user) = (
+                                    s.sponsorblock_server.clone(),
+                                    seg.uuid.clone(),
+                                    s.sb_user_id.clone(),
+                                );
                                 actions.push((
                                     translate(label).into(),
                                     Arc::new(move |_, cx: &mut App| {
-                                        let (server, uuid, user) = (server.clone(), uuid.clone(), user.clone());
+                                        let (server, uuid, user) =
+                                            (server.clone(), uuid.clone(), user.clone());
                                         cx.spawn(async move |cx| {
-                                            let res = crate::ui::blocking(move || services::sponsor_vote(&server, &uuid, &user, up)).await;
+                                            let res = crate::ui::blocking(move || {
+                                                services::sponsor_vote(&server, &uuid, &user, up)
+                                            })
+                                            .await;
                                             let _ = cx.update(|cx| match res {
                                                 Ok(()) => toast(cx, translate("Thanks for voting")),
                                                 Err(e) => toast(cx, tf!("Vote failed: {0}", e)),
@@ -869,7 +1018,14 @@ impl Player {
                                 ));
                             }
                         }
-                        crate::ui::toast_with_actions(cx, tf!("Skipped {0}", translate(services::sponsor_category_name(&seg.category))), actions);
+                        crate::ui::toast_with_actions(
+                            cx,
+                            tf!(
+                                "Skipped {0}",
+                                translate(services::sponsor_category_name(&seg.category))
+                            ),
+                            actions,
+                        );
                     }
                 }
                 "ask" => prompt = Some(seg.clone()),
@@ -887,7 +1043,9 @@ impl Player {
 
     pub(crate) fn save_progress(&mut self, force: bool) {
         if let Some(v) = &self.video {
-            if self.time > 0.0 || (force && (self.playback_ready || self.last_progress_save > 0.0 || self.eof)) {
+            if self.time > 0.0
+                || (force && (self.playback_ready || self.last_progress_save > 0.0 || self.eof))
+            {
                 // the periodic save goes to a background thread; a forced one (switching
                 // videos, the end, quitting) is written before going on
                 store::history_progress_queued(&v.id, self.time, self.duration, force);
@@ -926,7 +1084,8 @@ impl Player {
 
     pub fn play(&mut self, video: VideoItem, start: Option<f64>, cx: &mut Context<Self>) {
         self.autoplay_next = None;
-        self.playback_timing = std::env::var_os("STREAMTUBE_PLAYBACK_TIMING").map(|_| ("open", Instant::now()));
+        self.playback_timing =
+            std::env::var_os("STREAMTUBE_PLAYBACK_TIMING").map(|_| ("open", Instant::now()));
         self.keyboard_feedback = None;
         self.preloaded_until = 0.0;
         self.set_playback_ready(false, cx);
@@ -1010,7 +1169,9 @@ impl Player {
                 if let Some(refresh) = refresh {
                     // Use fresher cross-device progress if it arrives shortly.
                     // A slow history endpoint must not hold up playback.
-                    let limit = cx.background_executor().timer(std::time::Duration::from_millis(1200));
+                    let limit = cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_millis(1200));
                     let _ = futures::future::select(refresh, Box::pin(limit)).await;
                 }
             }
@@ -1042,9 +1203,15 @@ impl Player {
                         p.streams = Some(info);
                         // default caption
                         let s = store::settings_snapshot();
-                        let resume = start.or_else(|| s.resume_playback.then(|| store::resume_position(&id)).flatten());
+                        let resume = start.or_else(|| {
+                            s.resume_playback
+                                .then(|| store::resume_position(&id))
+                                .flatten()
+                        });
                         p.caption = if s.captions_enabled {
-                            p.streams.as_ref().and_then(|i| pick_caption(i, &s.captions_lang))
+                            p.streams
+                                .as_ref()
+                                .and_then(|i| pick_caption(i, &s.captions_lang))
                         } else {
                             None
                         };
@@ -1072,10 +1239,13 @@ impl Player {
 
     /// Fetches the current video's archived annotations (most videos have none).
     pub fn load_annotations(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.video.as_ref().map(|v| v.id.clone()) else { return };
+        let Some(id) = self.video.as_ref().map(|v| v.id.clone()) else {
+            return;
+        };
         let serial = self.load_serial;
         cx.spawn(async move |this, cx| {
-            let list = blocking(move || crate::api::annotations::fetch(&id).unwrap_or_default()).await;
+            let list =
+                blocking(move || crate::api::annotations::fetch(&id).unwrap_or_default()).await;
             let _ = this.update(cx, |p, cx| {
                 if p.load_serial == serial && !list.is_empty() {
                     p.annotations = Arc::new(list);
@@ -1090,7 +1260,9 @@ impl Player {
     fn fallback_to_ytdlp(&mut self, cx: &mut Context<Self>) {
         self.preloaded_until = 0.0;
         self.fallback_tried = true;
-        let Some(id) = self.video.as_ref().map(|v| v.id.clone()) else { return };
+        let Some(id) = self.video.as_ref().map(|v| v.id.clone()) else {
+            return;
+        };
         streams::invalidate(&id);
         let serial = self.load_serial;
         let resume = (self.time > 1.0).then_some(self.time);
@@ -1130,9 +1302,15 @@ impl Player {
         self.preloaded_until = 0.0;
         self.frame_progress = None;
         self.set_playback_ready(false, cx);
-        let (Some(mpv), Some(info)) = (self.mpv.clone(), self.streams.clone()) else { return };
+        let (Some(mpv), Some(info)) = (self.mpv.clone(), self.streams.clone()) else {
+            return;
+        };
         if let Some(("open", started)) = self.playback_timing {
-            eprintln!("[player] open to stream selection: {} ms ({})", started.elapsed().as_millis(), info.source);
+            eprintln!(
+                "[player] open to stream selection: {} ms ({})",
+                started.elapsed().as_millis(),
+                info.source
+            );
         }
         self.hold_picture = Some(mpv.presented_frames());
         let s = store::settings_snapshot();
@@ -1149,8 +1327,17 @@ impl Player {
         let src = match selection {
             Some(streams::PlaybackStream::Hls(url)) if info.hls_only || is_short => {
                 let audio = streams::hls_audio_choice(&info, self.audio_track.as_deref());
-                let source = super::proxy::playback_hls(url, self.quality, audio.as_deref(), self.recovering_picture);
-                if is_short && !self.recovering_picture && source != url && start.unwrap_or(0.0) == 0.0 {
+                let source = super::proxy::playback_hls(
+                    url,
+                    self.quality,
+                    audio.as_deref(),
+                    self.recovering_picture,
+                );
+                if is_short
+                    && !self.recovering_picture
+                    && source != url
+                    && start.unwrap_or(0.0) == 0.0
+                {
                     opening = super::shorts_preload::hls_opening_seconds(
                         url,
                         self.quality,
@@ -1162,7 +1349,8 @@ impl Player {
             }
             Some(streams::PlaybackStream::Hls(url)) => {
                 // libmpv only speaks HTTP proxies: with a SOCKS proxy, live HLS goes through the local proxy
-                if crate::store::proxy_setting().is_some_and(|p| !crate::store::mpv_http_proxy(&p)) {
+                if crate::store::proxy_setting().is_some_and(|p| !crate::store::mpv_http_proxy(&p))
+                {
                     let audio = streams::hls_audio_choice(&info, self.audio_track.as_deref());
                     Some(super::proxy::local_hls(url, self.quality, audio.as_deref()))
                 } else {
@@ -1212,7 +1400,9 @@ impl Player {
         self.loading = true;
         // mpv 0.38 added an index argument; older libmpv (Ubuntu 22.04's 0.34) takes options third
         let joined = opts.join(",");
-        let res = mpv.command(&["loadfile", &src, "replace", "-1", &joined]).or_else(|_| mpv.command(&["loadfile", &src, "replace", &joined]));
+        let res = mpv
+            .command(&["loadfile", &src, "replace", "-1", &joined])
+            .or_else(|_| mpv.command(&["loadfile", &src, "replace", &joined]));
         if let Err(e) = res {
             self.loading = false;
             self.error = Some(e.to_string());
@@ -1248,7 +1438,10 @@ impl Player {
         mpv.set("sub-color", &mpv_color(s.caption_color, s.caption_opacity));
         if s.caption_background {
             mpv.set("sub-border-style", "background-box");
-            mpv.set("sub-back-color", &mpv_color(s.caption_bg_color, s.caption_bg_opacity));
+            mpv.set(
+                "sub-back-color",
+                &mpv_color(s.caption_bg_color, s.caption_bg_opacity),
+            );
             mpv.set("sub-border-size", "2");
             mpv.set("sub-shadow-offset", "0");
         } else {
@@ -1280,7 +1473,10 @@ impl Player {
             }
             let want_caps = s.captions_enabled;
             if want_caps {
-                let desired = self.streams.as_ref().and_then(|i| pick_caption(i, &s.captions_lang));
+                let desired = self
+                    .streams
+                    .as_ref()
+                    .and_then(|i| pick_caption(i, &s.captions_lang));
                 if desired != self.caption {
                     self.caption = desired;
                     self.apply_caption();
@@ -1295,7 +1491,9 @@ impl Player {
 
     fn apply_caption(&mut self) {
         self.apply_caption_style();
-        let (Some(mpv), Some(info)) = (&self.mpv, &self.streams) else { return };
+        let (Some(mpv), Some(info)) = (&self.mpv, &self.streams) else {
+            return;
+        };
         let _ = mpv.command(&["sub-remove"]);
         if let Some(c) = self.caption.and_then(|i| info.captions.get(i)) {
             let url = if crate::store::proxy_setting().is_some() {
@@ -1314,7 +1512,11 @@ impl Player {
         self.apply_caption();
         if let Some(i) = idx {
             if let Some(c) = self.streams.as_ref().and_then(|s| s.captions.get(i)) {
-                let lang = strip_orig_suffix(&c.lang).split('-').next().unwrap_or("en").to_string();
+                let lang = strip_orig_suffix(&c.lang)
+                    .split('-')
+                    .next()
+                    .unwrap_or("en")
+                    .to_string();
                 store::update_settings(|s| {
                     s.captions_enabled = true;
                     s.captions_lang = lang;
@@ -1335,10 +1537,9 @@ impl Player {
             store::update_settings(|s| s.captions_enabled = false);
         } else {
             let lang = store::settings_snapshot().captions_lang.clone();
-            let next = self
-                .streams
-                .as_ref()
-                .and_then(|i| pick_caption(i, &lang).or_else(|| (!i.captions.is_empty()).then_some(0)));
+            let next = self.streams.as_ref().and_then(|i| {
+                pick_caption(i, &lang).or_else(|| (!i.captions.is_empty()).then_some(0))
+            });
             self.caption = next;
             self.apply_caption();
             if next.is_some() {
@@ -1395,7 +1596,13 @@ impl Player {
         let mut q: Vec<u32> = self
             .streams
             .as_ref()
-            .map(|s| s.video.iter().filter(|f| f.height > 0).map(streams::fmt_class).collect())
+            .map(|s| {
+                s.video
+                    .iter()
+                    .filter(|f| f.height > 0)
+                    .map(streams::fmt_class)
+                    .collect()
+            })
             .unwrap_or_default();
         q.sort_unstable_by(|a, b| b.cmp(a));
         q.dedup();
@@ -1406,7 +1613,12 @@ impl Player {
         let mut t: Vec<String> = self
             .streams
             .as_ref()
-            .map(|s| s.audio.iter().filter_map(|a| a.audio_language.clone()).collect())
+            .map(|s| {
+                s.audio
+                    .iter()
+                    .filter_map(|a| a.audio_language.clone())
+                    .collect()
+            })
             .unwrap_or_default();
         t.sort();
         t.dedup();
@@ -1422,13 +1634,22 @@ impl Player {
 
     /// Playback details for the "Stats for nerds" overlay, read from mpv.
     pub fn stats(&self) -> Vec<(&'static str, String)> {
-        let Some(m) = &self.mpv else { return Vec::new() };
+        let Some(m) = &self.mpv else {
+            return Vec::new();
+        };
         let f = |k: &str| m.get_f64(k);
         let st = |k: &str| m.get_string(k).filter(|s| !s.is_empty());
         let mut out: Vec<(&'static str, String)> = Vec::new();
         if let Some(v) = &self.video {
             let source = self.streams.as_ref().map(|s| s.source).unwrap_or("");
-            out.push(("Video ID", if source.is_empty() { v.id.clone() } else { tf!("{0}, via {1}", v.id, source) }));
+            out.push((
+                "Video ID",
+                if source.is_empty() {
+                    v.id.clone()
+                } else {
+                    tf!("{0}, via {1}", v.id, source)
+                },
+            ));
             if v.is_short {
                 let bytes = super::shorts_preload::served_bytes(&v.id);
                 out.push((
@@ -1438,32 +1659,76 @@ impl Player {
             }
         }
         if !self.audio_only {
-            let (w, h) = (f("video-params/w").unwrap_or(0.0), f("video-params/h").unwrap_or(0.0));
-            let fps = f("container-fps").or_else(|| f("estimated-vf-fps")).unwrap_or(0.0);
+            let (w, h) = (
+                f("video-params/w").unwrap_or(0.0),
+                f("video-params/h").unwrap_or(0.0),
+            );
+            let fps = f("container-fps")
+                .or_else(|| f("estimated-vf-fps"))
+                .unwrap_or(0.0);
             if w > 0.0 {
                 out.push(("Resolution", format!("{w:.0}x{h:.0}@{fps:.0}")));
             }
-            let dropped = f("frame-drop-count").unwrap_or(0.0) + f("decoder-frame-drop-count").unwrap_or(0.0);
+            let dropped =
+                f("frame-drop-count").unwrap_or(0.0) + f("decoder-frame-drop-count").unwrap_or(0.0);
             let shown = f("estimated-frame-number").unwrap_or(0.0);
-            out.push(("Frames", tf!("{0} dropped of {1}", format_args!("{:.0}", dropped), format_args!("{:.0}", shown))));
+            out.push((
+                "Frames",
+                tf!(
+                    "{0} dropped of {1}",
+                    format_args!("{:.0}", dropped),
+                    format_args!("{:.0}", shown)
+                ),
+            ));
             if let Some(c) = st("video-codec") {
-                let pf = st("video-params/hw-pixelformat").or_else(|| st("video-params/pixelformat")).unwrap_or_default();
-                out.push(("Video codec", if pf.is_empty() { c } else { format!("{c}, {pf}") }));
+                let pf = st("video-params/hw-pixelformat")
+                    .or_else(|| st("video-params/pixelformat"))
+                    .unwrap_or_default();
+                out.push((
+                    "Video codec",
+                    if pf.is_empty() {
+                        c
+                    } else {
+                        format!("{c}, {pf}")
+                    },
+                ));
             }
-            let hw = st("hwdec-current").filter(|s| s != "no").unwrap_or_else(|| translate("off (software)").into());
+            let hw = st("hwdec-current")
+                .filter(|s| s != "no")
+                .unwrap_or_else(|| translate("off (software)").into());
             out.push(("Hardware decoding", hw));
-            let color = [st("video-params/colormatrix"), st("video-params/primaries"), st("video-params/gamma")].into_iter().flatten().collect::<Vec<_>>();
+            let color = [
+                st("video-params/colormatrix"),
+                st("video-params/primaries"),
+                st("video-params/gamma"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
             if !color.is_empty() {
                 out.push(("Color", color.join(" / ")));
             }
         }
         if let Some(c) = st("audio-codec-name").or_else(|| st("audio-codec")) {
-            let rate = f("audio-params/samplerate").map(|r| tf!(", {0} kHz", format_args!("{:.1}", r / 1000.0))).unwrap_or_default();
-            let ch = f("audio-params/channel-count").map(|c| tf!(", {0} ch", format_args!("{:.0}", c))).unwrap_or_default();
+            let rate = f("audio-params/samplerate")
+                .map(|r| tf!(", {0} kHz", format_args!("{:.1}", r / 1000.0)))
+                .unwrap_or_default();
+            let ch = f("audio-params/channel-count")
+                .map(|c| tf!(", {0} ch", format_args!("{:.0}", c)))
+                .unwrap_or_default();
             out.push(("Audio codec", format!("{c}{rate}{ch}")));
         }
-        let kbps = |k: &str| f(k).filter(|b| *b > 0.0).map(|b| tf!("{0} kbps", format_args!("{:.0}", b / 1000.0)));
-        let rates = [kbps("video-bitrate").map(|v| tf!("video {0}", v)), kbps("audio-bitrate").map(|a| tf!("audio {0}", a))].into_iter().flatten().collect::<Vec<_>>();
+        let kbps = |k: &str| {
+            f(k).filter(|b| *b > 0.0)
+                .map(|b| tf!("{0} kbps", format_args!("{:.0}", b / 1000.0)))
+        };
+        let rates = [
+            kbps("video-bitrate").map(|v| tf!("video {0}", v)),
+            kbps("audio-bitrate").map(|a| tf!("audio {0}", a)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         if !rates.is_empty() {
             out.push(("Bitrate", rates.join(", ")));
         }
@@ -1471,17 +1736,44 @@ impl Player {
             out.push(("Buffer health", tf!("{0} s", format_args!("{:.2}", b))));
         }
         if let Some(sp) = f("cache-speed") {
-            out.push(("Connection speed", tf!("{0} Kbps", format_args!("{:.0}", sp * 8.0 / 1000.0))));
+            out.push((
+                "Connection speed",
+                tf!("{0} Kbps", format_args!("{:.0}", sp * 8.0 / 1000.0)),
+            ));
         }
         if let Some(mb) = m.get_f64("demuxer-cache-state/fw-bytes") {
-            out.push(("Buffered data", tf!("{0} MB", format_args!("{:.1}", mb / 1048576.0))));
+            out.push((
+                "Buffered data",
+                tf!("{0} MB", format_args!("{:.1}", mb / 1048576.0)),
+            ));
         }
-        out.push(("Volume", format!("{:.0}%{}", self.volume, if self.muted { translate(" (muted)") } else { "" })));
+        out.push((
+            "Volume",
+            format!(
+                "{:.0}%{}",
+                self.volume,
+                if self.muted {
+                    translate(" (muted)")
+                } else {
+                    ""
+                }
+            ),
+        ));
         out.push(("Speed", format!("{:.2}x", self.speed)));
         if let Some(a) = f("avsync") {
-            out.push(("A/V sync", tf!("{0} ms", format_args!("{:+.1}", a * 1000.0))));
+            out.push((
+                "A/V sync",
+                tf!("{0} ms", format_args!("{:+.1}", a * 1000.0)),
+            ));
         }
-        out.push(("Position", tf!("{0} / {1} s", format_args!("{:.1}", self.time), format_args!("{:.1}", self.duration))));
+        out.push((
+            "Position",
+            tf!(
+                "{0} / {1} s",
+                format_args!("{:.1}", self.time),
+                format_args!("{:.1}", self.duration)
+            ),
+        ));
         out
     }
 
@@ -1491,7 +1783,8 @@ impl Player {
         if self.eof {
             self.eof = false;
             if let Some(video) = &self.video {
-                self.history_report = crate::api::web::PlaybackReport::new(video.id.clone(), self.load_serial);
+                self.history_report =
+                    crate::api::web::PlaybackReport::new(video.id.clone(), self.load_serial);
             }
             self.seek_to(0.0);
             self.set_paused(false, cx);
@@ -1515,13 +1808,18 @@ impl Player {
     }
 
     fn updated_position_while_paused(&self) -> Option<f64> {
-        if !self.paused || !self.playback_ready || self.loading || self.eof || self.seeking
+        if !self.paused
+            || !self.playback_ready
+            || self.loading
+            || self.eof
+            || self.seeking
             || (self.time - self.last_progress_save).abs() >= 0.5
         {
             return None;
         }
         let (position, _) = store::playback_position(&self.video.as_ref()?.id)?;
-        (position.is_finite() && (position - self.last_progress_save).abs() >= 1.0).then_some(position)
+        (position.is_finite() && (position - self.last_progress_save).abs() >= 1.0)
+            .then_some(position)
     }
 
     fn update_paused(&mut self, paused: bool) {
@@ -1547,22 +1845,40 @@ impl Player {
         // Landing on a keyframe avoids fetching and decoding an extra GOP
         // before showing the picture after a large jump through an HLS VOD.
         let buffered = t >= self.time && t <= self.cache_time;
-        let remote_jump = (t - self.time).abs() >= 8.0 && !buffered
-            && self.streams.as_ref().is_some_and(|s| s.hls_only && !s.is_live);
-        self.seek(t, if remote_jump { "absolute+keyframes" } else { "absolute+exact" });
+        let remote_jump = (t - self.time).abs() >= 8.0
+            && !buffered
+            && self
+                .streams
+                .as_ref()
+                .is_some_and(|s| s.hls_only && !s.is_live);
+        self.seek(
+            t,
+            if remote_jump {
+                "absolute+keyframes"
+            } else {
+                "absolute+exact"
+            },
+        );
     }
 
     fn seek(&mut self, t: f64, mode: &str) {
-        self.playback_timing = std::env::var_os("STREAMTUBE_PLAYBACK_TIMING").map(|_| ("seek", Instant::now()));
+        self.playback_timing =
+            std::env::var_os("STREAMTUBE_PLAYBACK_TIMING").map(|_| ("seek", Instant::now()));
         self.frame_progress = None;
         self.preloaded_until = 0.0;
         let t = clamp_seek(t, self.duration);
-        if (t < self.time || self.seek_cache_target.is_some()) && !self.loading
-            && self.seek_disk_bytes < SEEK_DISK_CACHE_LIMIT && self.streams.as_ref().is_some_and(|s| !s.is_live)
+        if (t < self.time || self.seek_cache_target.is_some())
+            && !self.loading
+            && self.seek_disk_bytes < SEEK_DISK_CACHE_LIMIT
+            && self.streams.as_ref().is_some_and(|s| !s.is_live)
         {
             let ranges = self.cache_ranges.as_deref().unwrap_or_default();
-            let end = ranges.iter().filter(|&&(start, _)| start > t).map(|&(_, end)| end)
-                .chain(self.seek_cache_target.map(|(_, end)| end)).fold(t, f64::max);
+            let end = ranges
+                .iter()
+                .filter(|&&(start, _)| start > t)
+                .map(|&(_, end)| end)
+                .chain(self.seek_cache_target.map(|(_, end)| end))
+                .fold(t, f64::max);
             self.set_seek_cache_target((t < end).then_some((t, end)));
         }
         self.time = t;
@@ -1580,8 +1896,18 @@ impl Player {
             if let Some(mpv) = &self.mpv {
                 // Write incoming packets to a temporary file while closing the gap.
                 // Their headers still use RAM even when the payload is on disk.
-                mpv.set("file-local-options/demuxer-max-back-bytes", if target.is_some() { "20MiB" } else { BACK_CACHE_SIZE });
-                mpv.set("file-local-options/cache-on-disk", if target.is_some() { "yes" } else { "no" });
+                mpv.set(
+                    "file-local-options/demuxer-max-back-bytes",
+                    if target.is_some() {
+                        "20MiB"
+                    } else {
+                        BACK_CACHE_SIZE
+                    },
+                );
+                mpv.set(
+                    "file-local-options/cache-on-disk",
+                    if target.is_some() { "yes" } else { "no" },
+                );
             }
         }
         self.seek_cache_target = target;
@@ -1593,12 +1919,16 @@ impl Player {
     }
 
     pub fn keyboard_feedback(&self) -> Option<KeyboardFeedback> {
-        self.keyboard_feedback.as_ref().map(|(feedback, _)| *feedback)
+        self.keyboard_feedback
+            .as_ref()
+            .map(|(feedback, _)| *feedback)
     }
 
     pub fn show_keyboard_feedback(&mut self, feedback: KeyboardFeedback, cx: &mut Context<Self>) {
         let hide = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(std::time::Duration::from_millis(900)).await;
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(900))
+                .await;
             let _ = this.update(cx, |player, cx| {
                 player.keyboard_feedback = None;
                 cx.notify();
@@ -1635,7 +1965,11 @@ impl Player {
         if let Some(m) = &self.mpv {
             m.set("af", filter);
         }
-        let p = if EQ_PRESETS.iter().any(|&(k, _, _)| k == preset) { preset } else { "flat" };
+        let p = if EQ_PRESETS.iter().any(|&(k, _, _)| k == preset) {
+            preset
+        } else {
+            "flat"
+        };
         store::update_settings(|s| s.eq_preset = p.to_string());
     }
 
@@ -1685,7 +2019,11 @@ impl Player {
 
     pub fn step_speed(&mut self, increase: bool) {
         let steps = self.speed / 0.25;
-        let next = if increase { steps.floor() + 1.0 } else { steps.ceil() - 1.0 };
+        let next = if increase {
+            steps.floor() + 1.0
+        } else {
+            steps.ceil() - 1.0
+        };
         self.set_speed(next * 0.25);
     }
 
@@ -1695,17 +2033,26 @@ impl Player {
 
     pub fn frame_step(&mut self, forward: bool) {
         if let Some(m) = &self.mpv {
-            let _ = m.command(&[if forward { "frame-step" } else { "frame-back-step" }]);
+            let _ = m.command(&[if forward {
+                "frame-step"
+            } else {
+                "frame-back-step"
+            }]);
         }
     }
 
     pub fn screenshot(&mut self, cx: &mut Context<Self>) {
         if let Some(m) = &self.mpv {
-            let dir = dirs::picture_dir().unwrap_or_else(std::env::temp_dir).join("Stream Tube");
+            let dir = dirs::picture_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("Stream Tube");
             let _ = std::fs::create_dir_all(&dir);
             let name = format!(
                 "{}-{}.png",
-                self.video.as_ref().map(|v| v.id.as_str()).unwrap_or("frame"),
+                self.video
+                    .as_ref()
+                    .map(|v| v.id.as_str())
+                    .unwrap_or("frame"),
                 self.time as u64
             );
             let path = dir.join(name);
@@ -1751,11 +2098,16 @@ impl Player {
     }
 
     pub fn current_chapter(&self) -> Option<&Chapter> {
-        self.chapters.iter().rev().find(|c| c.start <= self.time + 0.01)
+        self.chapters
+            .iter()
+            .rev()
+            .find(|c| c.start <= self.time + 0.01)
     }
 
     pub fn highlight(&self) -> Option<&Segment> {
-        self.segments.iter().find(|s| s.action == "poi" || s.category == "poi_highlight")
+        self.segments
+            .iter()
+            .find(|s| s.action == "poi" || s.category == "poi_highlight")
     }
 }
 
@@ -1795,7 +2147,12 @@ fn average_color(data: &[u8], w: u32, h: u32) -> Option<Rgba> {
         }
     }
     let f = |v: u64| ((v as f32 / n as f32) / 255.0 * 1.25).min(1.0);
-    Some(Rgba { r: f(r), g: f(g), b: f(b), a: 1.0 })
+    Some(Rgba {
+        r: f(r),
+        g: f(g),
+        b: f(b),
+        a: 1.0,
+    })
 }
 
 fn strip_orig_suffix(code: &str) -> &str {
@@ -1812,7 +2169,10 @@ fn lang_matches(track: &str, target: &str) -> bool {
         return true;
     }
     if track.len() > target.len()
-        && track.get(..target.len()).map(|p| p.eq_ignore_ascii_case(target)).unwrap_or(false)
+        && track
+            .get(..target.len())
+            .map(|p| p.eq_ignore_ascii_case(target))
+            .unwrap_or(false)
         && track.as_bytes().get(target.len()) == Some(&b'-')
     {
         return true;
@@ -1822,7 +2182,10 @@ fn lang_matches(track: &str, target: &str) -> bool {
             return true;
         }
         if track.len() > t_base.len()
-            && track.get(..t_base.len()).map(|p| p.eq_ignore_ascii_case(t_base)).unwrap_or(false)
+            && track
+                .get(..t_base.len())
+                .map(|p| p.eq_ignore_ascii_case(t_base))
+                .unwrap_or(false)
             && track.as_bytes().get(t_base.len()) == Some(&b'-')
         {
             return true;
@@ -1836,9 +2199,21 @@ fn pick_for_lang(captions: &[CaptionTrack], target: &str) -> Option<usize> {
     captions
         .iter()
         .position(|c| !c.auto && strip_orig_suffix(&c.lang).eq_ignore_ascii_case(target_clean))
-        .or_else(|| captions.iter().position(|c| !c.auto && lang_matches(&c.lang, target)))
-        .or_else(|| captions.iter().position(|c| c.auto && strip_orig_suffix(&c.lang).eq_ignore_ascii_case(target_clean)))
-        .or_else(|| captions.iter().position(|c| c.auto && lang_matches(&c.lang, target)))
+        .or_else(|| {
+            captions
+                .iter()
+                .position(|c| !c.auto && lang_matches(&c.lang, target))
+        })
+        .or_else(|| {
+            captions.iter().position(|c| {
+                c.auto && strip_orig_suffix(&c.lang).eq_ignore_ascii_case(target_clean)
+            })
+        })
+        .or_else(|| {
+            captions
+                .iter()
+                .position(|c| c.auto && lang_matches(&c.lang, target))
+        })
 }
 
 fn base_lang(code: &str) -> String {
@@ -1929,8 +2304,12 @@ fn score_text_for_lang(text: &str, base: &str) -> i32 {
             'ä' | 'Ä' => de_chars += 1,
             'ã' | 'Ã' | 'õ' | 'Õ' => pt_chars += 1,
             'é' | 'è' | 'ê' | 'ë' | 'à' | 'ù' | 'ô' | 'î' | 'œ' => fr_chars += 1,
-            'ł' | 'Ł' | 'ś' | 'Ś' | 'ź' | 'Ź' | 'ż' | 'Ż' | 'ć' | 'Ć' | 'ń' | 'Ń' | 'ą' | 'ę' => pl_chars += 1,
-            'ă' | 'đ' | 'ơ' | 'ư' | 'ệ' | 'ộ' | 'ữ' | 'ả' | 'ẻ' | 'ổ' | 'ớ' | 'ờ' | 'ứ' | 'ừ' => vi_chars += 1,
+            'ł' | 'Ł' | 'ś' | 'Ś' | 'ź' | 'Ź' | 'ż' | 'Ż' | 'ć' | 'Ć' | 'ń' | 'Ń' | 'ą' | 'ę' => {
+                pl_chars += 1
+            }
+            'ă' | 'đ' | 'ơ' | 'ư' | 'ệ' | 'ộ' | 'ữ' | 'ả' | 'ẻ' | 'ổ' | 'ớ' | 'ờ' | 'ứ' | 'ừ' => {
+                vi_chars += 1
+            }
             _ => {}
         }
     }
@@ -1939,10 +2318,22 @@ fn score_text_for_lang(text: &str, base: &str) -> i32 {
         "ko" => return hangul * 4,
         "ja" => return kana * 5 + if kana > 0 { cjk } else { 0 },
         "zh" => return if kana == 0 && hangul == 0 { cjk * 3 } else { 0 },
-        "ru" => return if uk_chars == 0 { cyrillic * 3 } else { cyrillic },
+        "ru" => {
+            return if uk_chars == 0 {
+                cyrillic * 3
+            } else {
+                cyrillic
+            };
+        }
         "uk" => return uk_chars * 6 + if uk_chars > 0 { cyrillic } else { 0 },
         "bg" | "sr" | "be" | "mk" | "kk" | "ky" | "mn" => return cyrillic * 2,
-        "ar" => return if persian_chars == 0 && urdu_chars == 0 { arabic * 3 } else { arabic },
+        "ar" => {
+            return if persian_chars == 0 && urdu_chars == 0 {
+                arabic * 3
+            } else {
+                arabic
+            };
+        }
         "fa" => return persian_chars * 5 + if persian_chars > 0 { arabic } else { 0 },
         "ur" => return urdu_chars * 5 + if urdu_chars > 0 { arabic } else { 0 },
         "el" => return greek * 4,
@@ -1970,34 +2361,34 @@ fn score_text_for_lang(text: &str, base: &str) -> i32 {
         ],
         "en" => &[
             "the", "and", "you", "that", "this", "with", "for", "are", "was", "have", "from",
-            "your", "what", "how", "why", "when", "where", "about", "into", "just", "like",
-            "more", "will", "can", "all", "not", "but", "they", "their", "our", "out", "who",
-            "here", "there", "been", "were", "would", "could", "should", "every",
+            "your", "what", "how", "why", "when", "where", "about", "into", "just", "like", "more",
+            "will", "can", "all", "not", "but", "they", "their", "our", "out", "who", "here",
+            "there", "been", "were", "would", "could", "should", "every",
         ],
         "es" => &[
-            "que", "los", "las", "por", "para", "con", "una", "uno", "del", "como", "pero",
-            "más", "mas", "muy", "este", "esta", "todo", "porque", "cuando", "sobre", "desde",
-            "hasta", "donde", "sin", "sus", "ese", "esa", "esto", "qué", "cómo",
+            "que", "los", "las", "por", "para", "con", "una", "uno", "del", "como", "pero", "más",
+            "mas", "muy", "este", "esta", "todo", "porque", "cuando", "sobre", "desde", "hasta",
+            "donde", "sin", "sus", "ese", "esa", "esto", "qué", "cómo",
         ],
         "fr" => &[
-            "les", "des", "une", "pour", "dans", "avec", "pas", "que", "qui", "sur", "est",
-            "sont", "plus", "tout", "mais", "comme", "vous", "nous", "cette", "aussi", "bien",
-            "faire", "aux", "être", "avoir", "comment", "pourquoi",
+            "les", "des", "une", "pour", "dans", "avec", "pas", "que", "qui", "sur", "est", "sont",
+            "plus", "tout", "mais", "comme", "vous", "nous", "cette", "aussi", "bien", "faire",
+            "aux", "être", "avoir", "comment", "pourquoi",
         ],
         "de" => &[
-            "der", "die", "das", "und", "ist", "ein", "eine", "mit", "für", "fur", "auf",
-            "nicht", "von", "den", "dem", "sich", "des", "wie", "auch", "aber", "oder", "wenn",
-            "noch", "nur", "über", "uber", "nach", "wir", "ihr", "warum",
+            "der", "die", "das", "und", "ist", "ein", "eine", "mit", "für", "fur", "auf", "nicht",
+            "von", "den", "dem", "sich", "des", "wie", "auch", "aber", "oder", "wenn", "noch",
+            "nur", "über", "uber", "nach", "wir", "ihr", "warum",
         ],
         "pt" => &[
-            "que", "não", "nao", "para", "com", "uma", "por", "mais", "como", "mas", "foi",
-            "são", "sao", "isso", "este", "esta", "você", "voce", "dos", "das", "tem", "muito",
-            "tudo", "pelo", "pela", "porque", "quando",
+            "que", "não", "nao", "para", "com", "uma", "por", "mais", "como", "mas", "foi", "são",
+            "sao", "isso", "este", "esta", "você", "voce", "dos", "das", "tem", "muito", "tudo",
+            "pelo", "pela", "porque", "quando",
         ],
         "it" => &[
             "che", "non", "per", "con", "una", "sono", "della", "delle", "degli", "questo",
-            "questa", "come", "più", "piu", "anche", "tutto", "nella", "essere", "stato",
-            "molto", "perché", "perche", "dove",
+            "questa", "come", "più", "piu", "anche", "tutto", "nella", "essere", "stato", "molto",
+            "perché", "perche", "dove",
         ],
         "pl" => &[
             "nie", "się", "sie", "jest", "jak", "tak", "ale", "czy", "dla", "przez", "tylko",
@@ -2008,8 +2399,25 @@ fn score_text_for_lang(text: &str, base: &str) -> i32 {
             "nog", "wel", "deze", "over", "worden", "mijn", "wat", "waarom",
         ],
         "id" | "ms" => &[
-            "yang", "dan", "ini", "untuk", "dengan", "tidak", "dari", "pada", "akan", "bisa",
-            "saya", "kamu", "ada", "juga", "dalam", "atau", "tapi", "kenapa", "bagaimana",
+            "yang",
+            "dan",
+            "ini",
+            "untuk",
+            "dengan",
+            "tidak",
+            "dari",
+            "pada",
+            "akan",
+            "bisa",
+            "saya",
+            "kamu",
+            "ada",
+            "juga",
+            "dalam",
+            "atau",
+            "tapi",
+            "kenapa",
+            "bagaimana",
         ],
         _ => &[],
     };
@@ -2118,7 +2526,10 @@ pub fn pick_caption(info: &StreamInfo, pref: &str) -> Option<usize> {
         }
 
         // 3. Uploader / YouTube default caption track for the original audio track
-        if let Some(i) = info.default_caption_index.filter(|&i| i < info.captions.len()) {
+        if let Some(i) = info
+            .default_caption_index
+            .filter(|&i| i < info.captions.len())
+        {
             return Some(i);
         }
 
@@ -2217,9 +2628,27 @@ mod caption_tests {
         let info = StreamInfo {
             original_language: Some("ja".into()),
             captions: vec![
-                CaptionTrack { lang: "en".into(), name: "English".into(), url: String::new(), json3_url: None, auto: false },
-                CaptionTrack { lang: "ja".into(), name: "Japanese (auto-generated)".into(), url: String::new(), json3_url: None, auto: true },
-                CaptionTrack { lang: "ja".into(), name: "Japanese".into(), url: String::new(), json3_url: None, auto: false },
+                CaptionTrack {
+                    lang: "en".into(),
+                    name: "English".into(),
+                    url: String::new(),
+                    json3_url: None,
+                    auto: false,
+                },
+                CaptionTrack {
+                    lang: "ja".into(),
+                    name: "Japanese (auto-generated)".into(),
+                    url: String::new(),
+                    json3_url: None,
+                    auto: true,
+                },
+                CaptionTrack {
+                    lang: "ja".into(),
+                    name: "Japanese".into(),
+                    url: String::new(),
+                    json3_url: None,
+                    auto: false,
+                },
             ],
             ..Default::default()
         };
@@ -2231,10 +2660,23 @@ mod caption_tests {
         // Turkish video where background English song caused English ASR
         let info = StreamInfo {
             title: "Ev Genci Nedir? Gençler Neden Çalışmıyor?".into(),
-            description: "Bu bölümde yeni neslin sorunlarını konuşuyoruz. https://instagram.com/test".into(),
+            description:
+                "Bu bölümde yeni neslin sorunlarını konuşuyoruz. https://instagram.com/test".into(),
             captions: vec![
-                CaptionTrack { lang: "en".into(), name: "English (auto-generated)".into(), url: String::new(), json3_url: None, auto: true },
-                CaptionTrack { lang: "tr".into(), name: "Turkish".into(), url: String::new(), json3_url: None, auto: false },
+                CaptionTrack {
+                    lang: "en".into(),
+                    name: "English (auto-generated)".into(),
+                    url: String::new(),
+                    json3_url: None,
+                    auto: true,
+                },
+                CaptionTrack {
+                    lang: "tr".into(),
+                    name: "Turkish".into(),
+                    url: String::new(),
+                    json3_url: None,
+                    auto: false,
+                },
             ],
             ..Default::default()
         };
@@ -2243,10 +2685,23 @@ mod caption_tests {
         // English video with Turkish fan translation still picks English ASR
         let en_info = StreamInfo {
             title: "How Rockets Work and Why They Don't Fall".into(),
-            description: "In this video we explain how orbital mechanics work for beginners.".into(),
+            description: "In this video we explain how orbital mechanics work for beginners."
+                .into(),
             captions: vec![
-                CaptionTrack { lang: "en".into(), name: "English (auto-generated)".into(), url: String::new(), json3_url: None, auto: true },
-                CaptionTrack { lang: "tr".into(), name: "Turkish".into(), url: String::new(), json3_url: None, auto: false },
+                CaptionTrack {
+                    lang: "en".into(),
+                    name: "English (auto-generated)".into(),
+                    url: String::new(),
+                    json3_url: None,
+                    auto: true,
+                },
+                CaptionTrack {
+                    lang: "tr".into(),
+                    name: "Turkish".into(),
+                    url: String::new(),
+                    json3_url: None,
+                    auto: false,
+                },
             ],
             ..Default::default()
         };
@@ -2329,15 +2784,26 @@ mod queue_extend_tests {
     use super::*;
 
     fn vids(range: std::ops::Range<u32>) -> Vec<VideoItem> {
-        range.map(|i| VideoItem { id: format!("v{i}"), ..Default::default() }).collect()
+        range
+            .map(|i| VideoItem {
+                id: format!("v{i}"),
+                ..Default::default()
+            })
+            .collect()
     }
 
     #[::core::prelude::v1::test]
     fn extends_in_order_past_200_and_deduplicates() {
         let mut q = vids(0..100);
         let mut rng = rand::rng();
-        assert_eq!(extend_queue(&mut q, Some(0), vids(90..200), false, &mut rng), 100);
-        assert_eq!(extend_queue(&mut q, Some(50), vids(200..320), false, &mut rng), 120);
+        assert_eq!(
+            extend_queue(&mut q, Some(0), vids(90..200), false, &mut rng),
+            100
+        );
+        assert_eq!(
+            extend_queue(&mut q, Some(50), vids(200..320), false, &mut rng),
+            120
+        );
         assert_eq!(q.len(), 320);
         assert_eq!(q[199].id, "v199");
         assert_eq!(q[200].id, "v200");
@@ -2352,7 +2818,10 @@ mod queue_extend_tests {
         assert_eq!(added, 150);
         assert_eq!(q.len(), 250);
         // current track and already-played prefix stay fixed
-        assert_eq!((q[0].id.as_str(), q[1].id.as_str(), q[2].id.as_str()), ("v0", "v1", "v2"));
+        assert_eq!(
+            (q[0].id.as_str(), q[1].id.as_str(), q[2].id.as_str()),
+            ("v0", "v1", "v2")
+        );
         let unique: std::collections::HashSet<&str> = q.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(unique.len(), 250);
     }

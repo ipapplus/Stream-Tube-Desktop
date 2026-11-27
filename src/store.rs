@@ -7,8 +7,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -158,7 +158,8 @@ impl Default for Settings {
         for (c, _, _) in crate::api::services::SB_CATEGORIES {
             let a = match *c {
                 "sponsor" | "selfpromo" | "interaction" => "skip",
-                "poi_highlight" | "intro" | "outro" | "preview" | "filler" | "music_offtopic" | "hook" => "show",
+                "poi_highlight" | "intro" | "outro" | "preview" | "filler" | "music_offtopic"
+                | "hook" => "show",
                 _ => "off",
             };
             sb.insert(c.to_string(), a.to_string());
@@ -296,11 +297,15 @@ fn load_settings() -> Settings {
         .filter(|v| v.is_object());
     let raw = from_file.or_else(|| {
         load_setting_json::<serde_json::Value>("settings").map(|v| match v {
-            serde_json::Value::String(t) => serde_json::from_str(&t).unwrap_or(serde_json::Value::Null),
+            serde_json::Value::String(t) => {
+                serde_json::from_str(&t).unwrap_or(serde_json::Value::Null)
+            }
             v => v,
         })
     });
-    let Some(raw) = raw else { return Settings::default() };
+    let Some(raw) = raw else {
+        return Settings::default();
+    };
     let s = settings_from_value(raw);
     // the file is the copy that survives; write it the first time
     if !settings_file().exists() {
@@ -314,8 +319,11 @@ pub(crate) fn settings_from_value(raw: serde_json::Value) -> Settings {
     if let Ok(s) = serde_json::from_value::<Settings>(raw.clone()) {
         return s;
     }
-    let serde_json::Value::Object(stored) = raw else { return Settings::default() };
-    let Ok(serde_json::Value::Object(mut merged)) = serde_json::to_value(Settings::default()) else {
+    let serde_json::Value::Object(stored) = raw else {
+        return Settings::default();
+    };
+    let Ok(serde_json::Value::Object(mut merged)) = serde_json::to_value(Settings::default())
+    else {
         return Settings::default();
     };
     for (k, v) in stored {
@@ -343,8 +351,16 @@ fn write_settings_file(s: &Settings) -> Result<()> {
 
 fn normalize_settings(s: &mut Settings) {
     const LADDER: [u32; 7] = [144, 240, 360, 480, 720, 1080, 1440];
-    if s.default_quality != 2160 && s.default_quality != 4320 && !LADDER.contains(&s.default_quality) {
-        s.default_quality = LADDER.iter().copied().filter(|l| *l <= s.default_quality.max(144)).max().unwrap_or(1080);
+    if s.default_quality != 2160
+        && s.default_quality != 4320
+        && !LADDER.contains(&s.default_quality)
+    {
+        s.default_quality = LADDER
+            .iter()
+            .copied()
+            .filter(|l| *l <= s.default_quality.max(144))
+            .max()
+            .unwrap_or(1080);
         if s.default_quality < 720 {
             s.default_quality = 1080;
         }
@@ -363,7 +379,9 @@ static HISTORY_RECORDING_REVISION: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn history_recording_revision() -> Option<u64> {
     let settings = settings_lock().read();
-    settings.history_enabled.then(|| HISTORY_RECORDING_REVISION.load(Ordering::Relaxed))
+    settings
+        .history_enabled
+        .then(|| HISTORY_RECORDING_REVISION.load(Ordering::Relaxed))
 }
 
 pub fn update_settings(f: impl FnOnce(&mut Settings)) {
@@ -447,7 +465,10 @@ pub fn data_dir() -> PathBuf {
         }
         if !d.join("streamtube.db").exists() && d.join("ferrotube.db").exists() {
             for ext in ["", "-wal", "-shm"] {
-                let _ = std::fs::rename(d.join(format!("ferrotube.db{ext}")), d.join(format!("streamtube.db{ext}")));
+                let _ = std::fs::rename(
+                    d.join(format!("ferrotube.db{ext}")),
+                    d.join(format!("streamtube.db{ext}")),
+                );
             }
         }
         d
@@ -506,27 +527,41 @@ fn rebuild_into(old: &Connection, fresh: &std::path::Path) -> Result<()> {
     let new = Connection::open(fresh)?;
     new.execute_batch(TABLES)?;
     let tables: Vec<String> = {
-        let mut st = new.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")?;
-        st.query_map([], |r| r.get(0))?.filter_map(Result::ok).collect()
+        let mut st = new.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        )?;
+        st.query_map([], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect()
     };
     new.execute_batch("BEGIN")?;
     for t in tables {
-        let Ok(st) = old.prepare(&format!("SELECT * FROM \"{t}\" LIMIT 0")) else { continue };
+        let Ok(st) = old.prepare(&format!("SELECT * FROM \"{t}\" LIMIT 0")) else {
+            continue;
+        };
         let n = st.column_count();
         let cols: Vec<String> = st.column_names().map(|c| format!("\"{c}\"")).collect();
         drop(st);
         let marks = vec!["?"; n].join(",");
-        let insert = format!("INSERT OR IGNORE INTO \"{t}\"({}) VALUES ({marks})", cols.join(","));
+        let insert = format!(
+            "INSERT OR IGNORE INTO \"{t}\"({}) VALUES ({marks})",
+            cols.join(",")
+        );
         // Walk the table itself in rowid order (not an index: a damaged index points
         // keys at the wrong rows). When a page can't be read, start again a little
         // past the last good row, so one bad page doesn't lose everything after it.
-        let select = format!("SELECT rowid, * FROM \"{t}\" NOT INDEXED WHERE rowid > ?1 ORDER BY rowid");
+        let select =
+            format!("SELECT rowid, * FROM \"{t}\" NOT INDEXED WHERE rowid > ?1 ORDER BY rowid");
         let mut after = i64::MIN;
         let mut skip = 1i64;
         let mut tries = 0;
         while tries < 64 {
-            let Ok(mut st) = old.prepare(&select) else { break };
-            let Ok(mut rows) = st.query([after]) else { break };
+            let Ok(mut st) = old.prepare(&select) else {
+                break;
+            };
+            let Ok(mut rows) = st.query([after]) else {
+                break;
+            };
             let mut progressed = false;
             let finished = loop {
                 match rows.next() {
@@ -534,8 +569,9 @@ fn rebuild_into(old: &Connection, fresh: &std::path::Path) -> Result<()> {
                         let Ok(id) = r.get::<_, i64>(0) else { continue };
                         after = id;
                         progressed = true;
-                        let vals: Vec<rusqlite::types::Value> =
-                            (1..=n).map(|i| r.get(i).unwrap_or(rusqlite::types::Value::Null)).collect();
+                        let vals: Vec<rusqlite::types::Value> = (1..=n)
+                            .map(|i| r.get(i).unwrap_or(rusqlite::types::Value::Null))
+                            .collect();
                         let _ = new.execute(&insert, rusqlite::params_from_iter(vals));
                     }
                     Ok(None) => break true,
@@ -546,7 +582,11 @@ fn rebuild_into(old: &Connection, fresh: &std::path::Path) -> Result<()> {
                 break;
             }
             // jump over the unreadable part, further each time it fails again
-            skip = if progressed { 1 } else { skip.saturating_mul(4) };
+            skip = if progressed {
+                1
+            } else {
+                skip.saturating_mul(4)
+            };
             after = after.saturating_add(skip);
             tries += 1;
         }
@@ -561,16 +601,28 @@ fn db() -> &'static Mutex<Connection> {
         let conn = open_checked(&data_dir().join("streamtube.db"));
         // WAL mode is crash-safe with synchronous=NORMAL and avoids an fsync
         // on every 5-second playback progress save.
-        conn.execute_batch(&format!("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; {TABLES}"))
+        conn.execute_batch(&format!(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; {TABLES}"
+        ))
         .expect("init db");
         // built-in playlists
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM playlists WHERE protected=1", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM playlists WHERE protected=1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
         if n == 0 {
             let now = crate::api::json::now();
-            let _ = conn.execute("INSERT INTO playlists(name, created_at, protected) VALUES ('Watch later', ?1, 1)", [now]);
-            let _ = conn.execute("INSERT INTO playlists(name, created_at, protected) VALUES ('Favorites', ?1, 1)", [now + 1]);
+            let _ = conn.execute(
+                "INSERT INTO playlists(name, created_at, protected) VALUES ('Watch later', ?1, 1)",
+                [now],
+            );
+            let _ = conn.execute(
+                "INSERT INTO playlists(name, created_at, protected) VALUES ('Favorites', ?1, 1)",
+                [now + 1],
+            );
         }
         Mutex::new(conn)
     })
@@ -633,15 +685,25 @@ pub fn subscriptions() -> Vec<Subscription> {
     let mut st = conn
         .prepare("SELECT channel_id, name, avatar FROM subscriptions ORDER BY name COLLATE NOCASE")
         .unwrap();
-    st.query_map([], |r| Ok(Subscription { channel_id: r.get(0)?, name: r.get(1)?, avatar: r.get(2)? }))
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect()
+    st.query_map([], |r| {
+        Ok(Subscription {
+            channel_id: r.get(0)?,
+            name: r.get(1)?,
+            avatar: r.get(2)?,
+        })
+    })
+    .unwrap()
+    .filter_map(Result::ok)
+    .collect()
 }
 
 pub fn is_subscribed(channel_id: &str) -> bool {
     db().lock()
-        .query_row("SELECT 1 FROM subscriptions WHERE channel_id=?1", [channel_id], |_| Ok(()))
+        .query_row(
+            "SELECT 1 FROM subscriptions WHERE channel_id=?1",
+            [channel_id],
+            |_| Ok(()),
+        )
         .optional()
         .ok()
         .flatten()
@@ -659,8 +721,14 @@ pub fn subscribe(channel_id: &str, name: &str, avatar: Option<&str>) {
 
 pub fn unsubscribe(channel_id: &str) {
     let conn = db().lock();
-    let _ = conn.execute("DELETE FROM subscriptions WHERE channel_id=?1", [channel_id]);
-    let _ = conn.execute("DELETE FROM profile_channels WHERE channel_id=?1", [channel_id]);
+    let _ = conn.execute(
+        "DELETE FROM subscriptions WHERE channel_id=?1",
+        [channel_id],
+    );
+    let _ = conn.execute(
+        "DELETE FROM profile_channels WHERE channel_id=?1",
+        [channel_id],
+    );
     let _ = conn.execute("DELETE FROM feed_cache WHERE channel_id=?1", [channel_id]);
     bump_generation();
 }
@@ -675,22 +743,40 @@ pub struct Profile {
 
 pub fn profiles() -> Vec<Profile> {
     let conn = db().lock();
-    let mut st = conn.prepare("SELECT id, name, color FROM profiles ORDER BY id").unwrap();
+    let mut st = conn
+        .prepare("SELECT id, name, color FROM profiles ORDER BY id")
+        .unwrap();
     let mut ps: Vec<Profile> = st
-        .query_map([], |r| Ok(Profile { id: r.get(0)?, name: r.get(1)?, color: r.get::<_, i64>(2)? as u32, channels: vec![] }))
+        .query_map([], |r| {
+            Ok(Profile {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                color: r.get::<_, i64>(2)? as u32,
+                channels: vec![],
+            })
+        })
         .unwrap()
         .filter_map(Result::ok)
         .collect();
     for p in ps.iter_mut() {
-        let mut st = conn.prepare("SELECT channel_id FROM profile_channels WHERE profile_id=?1").unwrap();
-        p.channels = st.query_map([p.id], |r| r.get(0)).unwrap().filter_map(Result::ok).collect();
+        let mut st = conn
+            .prepare("SELECT channel_id FROM profile_channels WHERE profile_id=?1")
+            .unwrap();
+        p.channels = st
+            .query_map([p.id], |r| r.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
     }
     ps
 }
 
 pub fn create_profile(name: &str, color: u32) -> i64 {
     let conn = db().lock();
-    let _ = conn.execute("INSERT INTO profiles(name, color) VALUES (?1, ?2)", params![name, color as i64]);
+    let _ = conn.execute(
+        "INSERT INTO profiles(name, color) VALUES (?1, ?2)",
+        params![name, color as i64],
+    );
     conn.last_insert_rowid()
 }
 
@@ -703,9 +789,15 @@ pub fn delete_profile(id: i64) {
 pub fn set_profile_channel(profile_id: i64, channel_id: &str, member: bool) {
     let conn = db().lock();
     let _ = if member {
-        conn.execute("INSERT OR IGNORE INTO profile_channels VALUES (?1, ?2)", params![profile_id, channel_id])
+        conn.execute(
+            "INSERT OR IGNORE INTO profile_channels VALUES (?1, ?2)",
+            params![profile_id, channel_id],
+        )
     } else {
-        conn.execute("DELETE FROM profile_channels WHERE profile_id=?1 AND channel_id=?2", params![profile_id, channel_id])
+        conn.execute(
+            "DELETE FROM profile_channels WHERE profile_id=?1 AND channel_id=?2",
+            params![profile_id, channel_id],
+        )
     };
 }
 
@@ -756,7 +848,10 @@ pub fn history_add(v: &VideoItem) {
              ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, watched_at=excluded.watched_at",
             params![v.id, j, crate::api::json::now()],
         )?;
-        tx.execute("UPDATE history_sync SET removed=0 WHERE video_id=?1 AND removed<>0", [&v.id])?;
+        tx.execute(
+            "UPDATE history_sync SET removed=0 WHERE video_id=?1 AND removed<>0",
+            [&v.id],
+        )?;
         tx.commit()?;
         Ok(())
     })();
@@ -766,7 +861,12 @@ pub fn history_add(v: &VideoItem) {
 }
 
 pub fn history_progress(video_id: &str, progress: f64, duration: f64) {
-    if !settings_snapshot().history_enabled || !progress.is_finite() || progress < 0.0 || !duration.is_finite() || duration < 0.0 {
+    if !settings_snapshot().history_enabled
+        || !progress.is_finite()
+        || progress < 0.0
+        || !duration.is_finite()
+        || duration < 0.0
+    {
         return;
     }
     let result = (|| -> Result<()> {
@@ -801,18 +901,29 @@ pub fn history_progress_queued(video_id: &str, progress: f64, duration: f64, wai
     static WORKER: OnceLock<Mutex<std::sync::mpsc::Sender<Job>>> = OnceLock::new();
     let tx = WORKER.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel::<Job>();
-        let _ = std::thread::Builder::new().name("history-progress".into()).spawn(move || {
-            for (id, p, d, done) in rx {
-                history_progress(&id, p, d);
-                if let Some(done) = done {
-                    let _ = done.send(());
+        let _ = std::thread::Builder::new()
+            .name("history-progress".into())
+            .spawn(move || {
+                for (id, p, d, done) in rx {
+                    history_progress(&id, p, d);
+                    if let Some(done) = done {
+                        let _ = done.send(());
+                    }
                 }
-            }
-        });
+            });
         Mutex::new(tx)
     });
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    if tx.lock().send((video_id.to_string(), progress, duration, wait.then_some(done_tx))).is_err() {
+    if tx
+        .lock()
+        .send((
+            video_id.to_string(),
+            progress,
+            duration,
+            wait.then_some(done_tx),
+        ))
+        .is_err()
+    {
         history_progress(video_id, progress, duration);
         return;
     }
@@ -824,19 +935,35 @@ pub fn history_progress_queued(video_id: &str, progress: f64, duration: f64, wai
 pub fn history_list(query: &str, limit: usize) -> Vec<HistoryEntry> {
     let conn = db().lock();
     let mut st = conn
-        .prepare("SELECT json, watched_at, progress, duration FROM history ORDER BY watched_at DESC")
+        .prepare(
+            "SELECT json, watched_at, progress, duration FROM history ORDER BY watched_at DESC",
+        )
         .unwrap();
     let q = query.to_lowercase();
     st.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?))
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, f64>(2)?,
+            r.get::<_, f64>(3)?,
+        ))
     })
     .unwrap()
     .filter_map(Result::ok)
     .filter_map(|(j, t, p, d)| {
         let v: VideoItem = serde_json::from_str(&j).ok()?;
-        Some(HistoryEntry { video: v, watched_at: t, progress: p, duration: d })
+        Some(HistoryEntry {
+            video: v,
+            watched_at: t,
+            progress: p,
+            duration: d,
+        })
     })
-    .filter(|h| q.is_empty() || h.video.title.to_lowercase().contains(&q) || h.video.channel_name.to_lowercase().contains(&q))
+    .filter(|h| {
+        q.is_empty()
+            || h.video.title.to_lowercase().contains(&q)
+            || h.video.channel_name.to_lowercase().contains(&q)
+    })
     .take(limit)
     .collect()
 }
@@ -844,19 +971,28 @@ pub fn history_list(query: &str, limit: usize) -> Vec<HistoryEntry> {
 /// video_id -> (progress, duration)
 pub fn progress_map() -> HashMap<String, (f64, f64)> {
     let conn = db().lock();
-    let mut st = conn.prepare("SELECT video_id, progress, duration FROM history").unwrap();
-    st.query_map([], |r| Ok((r.get::<_, String>(0)?, (r.get::<_, f64>(1)?, r.get::<_, f64>(2)?))))
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect()
+    let mut st = conn
+        .prepare("SELECT video_id, progress, duration FROM history")
+        .unwrap();
+    st.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            (r.get::<_, f64>(1)?, r.get::<_, f64>(2)?),
+        ))
+    })
+    .unwrap()
+    .filter_map(Result::ok)
+    .collect()
 }
 
 pub fn playback_position(video_id: &str) -> Option<(f64, f64)> {
-    db().lock().query_row(
-        "SELECT progress, duration FROM history WHERE video_id=?1",
-        [video_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).ok()
+    db().lock()
+        .query_row(
+            "SELECT progress, duration FROM history WHERE video_id=?1",
+            [video_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()
 }
 
 pub fn resume_position(video_id: &str) -> Option<f64> {
@@ -875,7 +1011,14 @@ pub fn history_merge_remote(
     if history_recording_revision() != Some(recording_revision) {
         return Ok(());
     }
-    merge_remote_history(&mut db().lock(), &account.to_string(), entries, protected_video, requested_at, offset)
+    merge_remote_history(
+        &mut db().lock(),
+        &account.to_string(),
+        entries,
+        protected_video,
+        requested_at,
+        offset,
+    )
 }
 
 fn merge_remote_history(
@@ -908,16 +1051,30 @@ fn merge_remote_history(
             if Some(id) == protected_video {
                 continue;
             }
-            let (observed_account, previous_remote, local_at, removed): (Option<String>, Option<f64>, i64, bool) =
-                state.query_row([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-                    .optional()?.unwrap_or_default();
+            let (observed_account, previous_remote, local_at, removed): (
+                Option<String>,
+                Option<f64>,
+                i64,
+                bool,
+            ) = state
+                .query_row([id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .optional()?
+                .unwrap_or_default();
             if local_at > requested_at.saturating_sub(LOCAL_GRACE_MS) {
                 continue;
             }
             let local_progress: Option<f64> = local.query_row([id], |row| row.get(0)).optional()?;
-            let previous_remote = previous_remote.filter(|_| observed_account.as_deref() == Some(account));
-            let remote_changed = entry.progress.zip(previous_remote)
-                .is_some_and(|(remote, previous)| (remote.seconds - previous).abs() >= remote.precision);
+            let previous_remote =
+                previous_remote.filter(|_| observed_account.as_deref() == Some(account));
+            let remote_changed =
+                entry
+                    .progress
+                    .zip(previous_remote)
+                    .is_some_and(|(remote, previous)| {
+                        (remote.seconds - previous).abs() >= remote.precision
+                    });
             let still_removed = removed && !remote_changed;
             let observation = entry.progress.map(|p| p.seconds).or(previous_remote);
             observe.execute(params![id, account, observation, still_removed])?;
@@ -927,14 +1084,22 @@ fn merge_remote_history(
             let accepted = entry.progress.filter(|remote| {
                 // Without a prior server observation, its age is unknown. Keep
                 // meaningful local progress until the server position changes.
-                local_progress.is_none_or(|position| (position == 0.0 && local_at == 0 && previous_remote.is_none()) ||
-                    (remote_changed && (remote.seconds - position).abs() >= remote.precision))
+                local_progress.is_none_or(|position| {
+                    (position == 0.0 && local_at == 0 && previous_remote.is_none())
+                        || (remote_changed && (remote.seconds - position).abs() >= remote.precision)
+                })
             });
             let json = serde_json::to_string(&entry.video)?;
             let duration = entry.video.duration_secs.unwrap_or(0) as f64;
             // History responses are ordered but don't give a per-video date.
             let watched_at = requested_at / 1000 - (offset + index) as i64;
-            save.execute(params![id, json, watched_at, accepted.map(|p| p.seconds), duration])?;
+            save.execute(params![
+                id,
+                json,
+                watched_at,
+                accepted.map(|p| p.seconds),
+                duration
+            ])?;
         }
     }
     tx.commit()?;
@@ -989,15 +1154,27 @@ mod history_merge_tests {
 
     fn entry(seconds: Option<f64>) -> Entry {
         Entry {
-            video: VideoItem { id: VIDEO_ID.into(), duration_secs: Some(600), ..Default::default() },
-            progress: seconds.map(|seconds| Position { seconds, precision: 1.0 }),
+            video: VideoItem {
+                id: VIDEO_ID.into(),
+                duration_secs: Some(600),
+                ..Default::default()
+            },
+            progress: seconds.map(|seconds| Position {
+                seconds,
+                precision: 1.0,
+            }),
             removal_token: None,
         }
     }
 
     fn progress(conn: &Connection) -> Option<f64> {
-        conn.query_row("SELECT progress FROM history WHERE video_id=?1", [VIDEO_ID], |row| row.get(0))
-            .optional().unwrap()
+        conn.query_row(
+            "SELECT progress FROM history WHERE video_id=?1",
+            [VIDEO_ID],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap()
     }
 
     #[test]
@@ -1010,7 +1187,15 @@ mod history_merge_tests {
         merge_remote_history(&mut conn, "web", &[entry(None)], None, NOW + 60_000, 0).unwrap();
         assert_eq!(progress(&conn), Some(300.0));
 
-        merge_remote_history(&mut conn, "web", &[entry(Some(80.0))], None, NOW + 120_000, 0).unwrap();
+        merge_remote_history(
+            &mut conn,
+            "web",
+            &[entry(Some(80.0))],
+            None,
+            NOW + 120_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), Some(80.0));
     }
 
@@ -1018,17 +1203,49 @@ mod history_merge_tests {
     fn first_observation_and_in_flight_refresh_keep_local_progress() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(TABLES).unwrap();
-        conn.execute("INSERT INTO history VALUES (?1, '{}', 123, 300, 600)", [VIDEO_ID]).unwrap();
+        conn.execute(
+            "INSERT INTO history VALUES (?1, '{}', 123, 300, 600)",
+            [VIDEO_ID],
+        )
+        .unwrap();
         merge_remote_history(&mut conn, "web", &[entry(Some(450.0))], None, NOW, 0).unwrap();
         assert_eq!(progress(&conn), Some(300.0));
 
-        conn.execute("UPDATE history_sync SET local_updated_at=?1 WHERE video_id=?2", params![NOW + 61_000, VIDEO_ID]).unwrap();
-        merge_remote_history(&mut conn, "web", &[entry(Some(80.0))], None, NOW + 60_000, 0).unwrap();
+        conn.execute(
+            "UPDATE history_sync SET local_updated_at=?1 WHERE video_id=?2",
+            params![NOW + 61_000, VIDEO_ID],
+        )
+        .unwrap();
+        merge_remote_history(
+            &mut conn,
+            "web",
+            &[entry(Some(80.0))],
+            None,
+            NOW + 60_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), Some(300.0));
 
-        merge_remote_history(&mut conn, "web", &[entry(Some(80.0))], Some(VIDEO_ID), NOW + 120_000, 0).unwrap();
+        merge_remote_history(
+            &mut conn,
+            "web",
+            &[entry(Some(80.0))],
+            Some(VIDEO_ID),
+            NOW + 120_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), Some(300.0));
-        merge_remote_history(&mut conn, "web", &[entry(Some(80.0))], None, NOW + 120_000, 0).unwrap();
+        merge_remote_history(
+            &mut conn,
+            "web",
+            &[entry(Some(80.0))],
+            None,
+            NOW + 120_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), Some(80.0));
     }
 
@@ -1038,11 +1255,28 @@ mod history_merge_tests {
         conn.execute_batch(TABLES).unwrap();
         merge_remote_history(&mut conn, "web", &[entry(Some(300.0))], None, NOW, 0).unwrap();
         conn.execute("DELETE FROM history", []).unwrap();
-        conn.execute("UPDATE history_sync SET removed=1", []).unwrap();
-        merge_remote_history(&mut conn, "web", &[entry(Some(300.0))], None, NOW + 60_000, 0).unwrap();
+        conn.execute("UPDATE history_sync SET removed=1", [])
+            .unwrap();
+        merge_remote_history(
+            &mut conn,
+            "web",
+            &[entry(Some(300.0))],
+            None,
+            NOW + 60_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), None);
 
-        merge_remote_history(&mut conn, "web", &[entry(Some(80.0))], None, NOW + 120_000, 0).unwrap();
+        merge_remote_history(
+            &mut conn,
+            "web",
+            &[entry(Some(80.0))],
+            None,
+            NOW + 120_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), Some(80.0));
     }
 
@@ -1051,11 +1285,35 @@ mod history_merge_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(TABLES).unwrap();
         merge_remote_history(&mut conn, "web", &[entry(Some(300.0))], None, NOW, 0).unwrap();
-        merge_remote_history(&mut conn, "another-account", &[entry(Some(450.0))], None, NOW + 60_000, 0).unwrap();
+        merge_remote_history(
+            &mut conn,
+            "another-account",
+            &[entry(Some(450.0))],
+            None,
+            NOW + 60_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), Some(300.0));
-        conn.execute("UPDATE history SET progress=0 WHERE video_id=?1", [VIDEO_ID]).unwrap();
-        conn.execute("UPDATE history_sync SET local_updated_at=?1 WHERE video_id=?2", params![NOW + 65_000, VIDEO_ID]).unwrap();
-        merge_remote_history(&mut conn, "another-account", &[entry(Some(450.0))], None, NOW + 120_000, 0).unwrap();
+        conn.execute(
+            "UPDATE history SET progress=0 WHERE video_id=?1",
+            [VIDEO_ID],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE history_sync SET local_updated_at=?1 WHERE video_id=?2",
+            params![NOW + 65_000, VIDEO_ID],
+        )
+        .unwrap();
+        merge_remote_history(
+            &mut conn,
+            "another-account",
+            &[entry(Some(450.0))],
+            None,
+            NOW + 120_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(progress(&conn), Some(0.0));
     }
 }
@@ -1077,10 +1335,13 @@ pub fn search_history(prefix: &str, limit: usize) -> Vec<String> {
     let mut st = conn
         .prepare("SELECT query FROM search_history WHERE query LIKE ?1 ORDER BY at DESC LIMIT ?2")
         .unwrap();
-    st.query_map(params![format!("{}%", prefix.replace('%', "")), limit as i64], |r| r.get(0))
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect()
+    st.query_map(
+        params![format!("{}%", prefix.replace('%', "")), limit as i64],
+        |r| r.get(0),
+    )
+    .unwrap()
+    .filter_map(Result::ok)
+    .collect()
 }
 
 /// Adds searches made on other devices without moving existing entries;
@@ -1089,11 +1350,19 @@ pub fn search_history_merge_remote(q: &str, at: i64) -> bool {
     if !settings_snapshot().search_history_enabled || q.trim().is_empty() {
         return false;
     }
-    db().lock().execute("INSERT OR IGNORE INTO search_history VALUES (?1, ?2)", params![q.trim(), at]).map(|n| n > 0).unwrap_or(false)
+    db().lock()
+        .execute(
+            "INSERT OR IGNORE INTO search_history VALUES (?1, ?2)",
+            params![q.trim(), at],
+        )
+        .map(|n| n > 0)
+        .unwrap_or(false)
 }
 
 pub fn search_history_remove(q: &str) {
-    let _ = db().lock().execute("DELETE FROM search_history WHERE query=?1", [q]);
+    let _ = db()
+        .lock()
+        .execute("DELETE FROM search_history WHERE query=?1", [q]);
 }
 
 pub fn search_history_clear() {
@@ -1127,7 +1396,9 @@ pub fn playlists() -> Vec<LocalPlaylist> {
             name: r.get(1)?,
             protected: r.get::<_, i64>(2)? != 0,
             count: r.get::<_, i64>(3)? as usize,
-            thumbnail: j.and_then(|j| serde_json::from_str::<VideoItem>(&j).ok()).map(|v| v.thumbnail),
+            thumbnail: j
+                .and_then(|j| serde_json::from_str::<VideoItem>(&j).ok())
+                .map(|v| v.thumbnail),
         })
     })
     .unwrap()
@@ -1147,7 +1418,10 @@ pub fn playlist_create(name: &str) -> i64 {
 }
 
 pub fn playlist_rename(id: i64, name: &str) {
-    let _ = db().lock().execute("UPDATE playlists SET name=?2 WHERE id=?1", params![id, name]);
+    let _ = db().lock().execute(
+        "UPDATE playlists SET name=?2 WHERE id=?1",
+        params![id, name],
+    );
     bump_generation();
 }
 
@@ -1173,7 +1447,11 @@ pub fn playlist_items(id: i64) -> Vec<VideoItem> {
 pub fn playlist_add(id: i64, v: &VideoItem) {
     let conn = db().lock();
     let pos: i64 = conn
-        .query_row("SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id=?1", [id], |r| r.get(0))
+        .query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id=?1",
+            [id],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
     if let Ok(j) = serde_json::to_string(v) {
         let _ = conn.execute(
@@ -1206,7 +1484,9 @@ pub fn playlist_contains(id: i64, video_id: &str) -> bool {
 /// Moves an item up (-1) or down (+1).
 pub fn playlist_move(id: i64, video_id: &str, delta: i64) {
     let items = playlist_items(id);
-    let Some(idx) = items.iter().position(|v| v.id == video_id) else { return };
+    let Some(idx) = items.iter().position(|v| v.id == video_id) else {
+        return;
+    };
     let target = idx as i64 + delta;
     if target < 0 || target >= items.len() as i64 {
         return;
@@ -1224,7 +1504,9 @@ pub fn playlist_move(id: i64, video_id: &str, delta: i64) {
 
 pub fn saved_playlists() -> Vec<crate::api::types::PlaylistItem> {
     let conn = db().lock();
-    let mut st = conn.prepare("SELECT json FROM saved_playlists ORDER BY added_at DESC").unwrap();
+    let mut st = conn
+        .prepare("SELECT json FROM saved_playlists ORDER BY added_at DESC")
+        .unwrap();
     st.query_map([], |r| r.get::<_, String>(0))
         .unwrap()
         .filter_map(Result::ok)
@@ -1237,7 +1519,11 @@ pub fn save_playlist(p: &crate::api::types::PlaylistItem, save: bool) {
     let _ = if save {
         conn.execute(
             "INSERT OR REPLACE INTO saved_playlists VALUES (?1, ?2, ?3)",
-            params![p.id, serde_json::to_string(p).unwrap_or_default(), crate::api::json::now()],
+            params![
+                p.id,
+                serde_json::to_string(p).unwrap_or_default(),
+                crate::api::json::now()
+            ],
         )
     } else {
         conn.execute("DELETE FROM saved_playlists WHERE playlist_id=?1", [&p.id])
@@ -1246,7 +1532,11 @@ pub fn save_playlist(p: &crate::api::types::PlaylistItem, save: bool) {
 
 pub fn is_playlist_saved(id: &str) -> bool {
     db().lock()
-        .query_row("SELECT 1 FROM saved_playlists WHERE playlist_id=?1", [id], |_| Ok(()))
+        .query_row(
+            "SELECT 1 FROM saved_playlists WHERE playlist_id=?1",
+            [id],
+            |_| Ok(()),
+        )
         .optional()
         .ok()
         .flatten()
@@ -1257,7 +1547,11 @@ pub fn is_playlist_saved(id: &str) -> bool {
 
 pub fn channel_speed(channel_id: &str) -> Option<f64> {
     db().lock()
-        .query_row("SELECT speed FROM channel_speed WHERE channel_id=?1", [channel_id], |r| r.get(0))
+        .query_row(
+            "SELECT speed FROM channel_speed WHERE channel_id=?1",
+            [channel_id],
+            |r| r.get(0),
+        )
         .optional()
         .ok()
         .flatten()
@@ -1275,7 +1569,10 @@ pub fn speed_reset_available(channel_id: &str) -> bool {
 }
 
 pub fn clear_channel_speed(channel_id: &str) {
-    let _ = db().lock().execute("DELETE FROM channel_speed WHERE channel_id=?1", [channel_id]);
+    let _ = db().lock().execute(
+        "DELETE FROM channel_speed WHERE channel_id=?1",
+        [channel_id],
+    );
 }
 
 // ───────────────────────── content filter ─────────────────────────
@@ -1301,7 +1598,10 @@ pub fn is_filtered(v: &VideoItem, s: &Settings) -> bool {
     }
     if !s.blocked_keywords.is_empty() {
         let t = v.title.to_lowercase();
-        if s.blocked_keywords.iter().any(|k| !k.trim().is_empty() && t.contains(&k.trim().to_lowercase())) {
+        if s.blocked_keywords
+            .iter()
+            .any(|k| !k.trim().is_empty() && t.contains(&k.trim().to_lowercase()))
+        {
             return true;
         }
     }
@@ -1310,7 +1610,9 @@ pub fn is_filtered(v: &VideoItem, s: &Settings) -> bool {
 
 /// Local like state of a video: 1 liked, -1 disliked, 0 none.
 pub fn rating(video_id: &str) -> i8 {
-    kv_get(&format!("rating:{video_id}")).and_then(|s| s.parse().ok()).unwrap_or(0)
+    kv_get(&format!("rating:{video_id}"))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 pub fn set_rating(video_id: &str, r: i8) {
@@ -1326,7 +1628,10 @@ mod settings_tests {
         let old = settings_from_value(serde_json::json!({}));
         assert!(!old.theater_mode);
 
-        let enabled = Settings { theater_mode: true, ..old };
+        let enabled = Settings {
+            theater_mode: true,
+            ..old
+        };
         let saved = serde_json::to_value(enabled).unwrap();
         assert!(settings_from_value(saved).theater_mode);
     }
@@ -1358,9 +1663,17 @@ mod settings_tests {
             let c = Connection::open(&path).unwrap();
             c.execute_batch(TABLES).unwrap();
             for i in 0..300 {
-                c.execute("INSERT INTO kv VALUES (?1, ?2)", params![format!("k{i}"), "x".repeat(200)]).unwrap();
+                c.execute(
+                    "INSERT INTO kv VALUES (?1, ?2)",
+                    params![format!("k{i}"), "x".repeat(200)],
+                )
+                .unwrap();
             }
-            c.execute("INSERT INTO subscriptions VALUES ('UC1', 'One', NULL, 1)", []).unwrap();
+            c.execute(
+                "INSERT INTO subscriptions VALUES ('UC1', 'One', NULL, 1)",
+                [],
+            )
+            .unwrap();
         }
         // scribble over a page in the middle of the file, as a damaged write would
         {
@@ -1371,11 +1684,18 @@ mod settings_tests {
             f.write_all(&[0xAB; 64]).unwrap();
         }
         let c = open_checked(&path);
-        let ok: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
+        let ok: String = c
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(ok, "ok");
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM kv", [], |r| r.get(0)).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM kv", [], |r| r.get(0))
+            .unwrap();
         assert!(n > 100, "kept {n} rows");
-        let damaged = std::fs::read_dir(&dir).unwrap().filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().contains("damaged"));
+        let damaged = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().contains("damaged"));
         assert!(damaged, "the damaged file is kept");
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1388,7 +1708,10 @@ mod progress_queue_tests {
 
     #[test]
     fn queued_progress_writes_land_in_order() {
-        let v = crate::api::types::VideoItem { id: "queued-progress".into(), ..Default::default() };
+        let v = crate::api::types::VideoItem {
+            id: "queued-progress".into(),
+            ..Default::default()
+        };
         history_add(&v);
         for i in 1..=50 {
             history_progress_queued(&v.id, i as f64, 100.0, false);
@@ -1396,7 +1719,12 @@ mod progress_queue_tests {
         history_progress_queued(&v.id, 77.0, 100.0, true);
         // `wait` gives up after 5 s so shutdown can't hang; on a busy CI runner other
         // tests can hold the database longer than that, so give the worker more time here
-        let read = || history_list("", 500).into_iter().find(|h| h.video.id == v.id).map(|h| h.progress);
+        let read = || {
+            history_list("", 500)
+                .into_iter()
+                .find(|h| h.video.id == v.id)
+                .map(|h| h.progress)
+        };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while read() != Some(77.0) && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(100));

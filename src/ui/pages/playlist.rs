@@ -1,6 +1,7 @@
 use crate::api::innertube;
-use crate::i18n::{t, tf};
 use crate::api::types::*;
+use crate::i18n::{t, tf};
+use crate::metrics::{self, MetricKind};
 use crate::player::controller::player;
 use crate::store;
 use crate::ui::app::{Route, confirm, navigate, prompt_text};
@@ -48,7 +49,9 @@ impl PlaylistPage {
                 match innertube::playlist(&id) {
                     Ok(p) if !p.videos.is_empty() || !signed => Ok((p, false)),
                     // private / unlisted: only the owner's account can see it
-                    other => crate::api::auth::playlist(&id).map(|p| (p, true)).or_else(|e| other.map(|p| (p, false)).map_err(|_| e)),
+                    other => crate::api::auth::playlist(&id)
+                        .map(|p| (p, true))
+                        .or_else(|e| other.map(|p| (p, false)).map_err(|_| e)),
                 }
             })
             .await;
@@ -57,7 +60,11 @@ impl PlaylistPage {
                     Ok((p, authed)) => {
                         this.authed = authed;
                         this.title = p.info.title.clone();
-                        this.owner = p.info.channel_name.clone().map(|n| (n, p.info.channel_id.clone()));
+                        this.owner = p
+                            .info
+                            .channel_name
+                            .clone()
+                            .map(|n| (n, p.info.channel_id.clone()));
                         this.count_text = p.info.video_count_text.clone();
                         this.description = p.description.clone();
                         this.videos = Load::Ready(p.videos);
@@ -83,14 +90,21 @@ impl PlaylistPage {
     }
 
     fn make_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let f = cx.new(|cx| gpui_kit::component::input::InputState::new(window, cx).placeholder(t("Search in playlist")));
+        let f = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx)
+                .placeholder(t("Search in playlist"))
+        });
         cx.observe(&f, |_, _, cx| cx.notify()).detach();
         self.filter = Some(f);
     }
 
     /// Videos after the search filter and sort, with their index in the playlist.
     fn visible(&self, cx: &App) -> Vec<(usize, VideoItem)> {
-        let q = self.filter.as_ref().map(|f| f.read(cx).value().trim().to_lowercase()).unwrap_or_default();
+        let q = self
+            .filter
+            .as_ref()
+            .map(|f| f.read(cx).value().trim().to_lowercase())
+            .unwrap_or_default();
         let mut v: Vec<(usize, VideoItem)> = self
             .videos
             .ready()
@@ -98,13 +112,29 @@ impl PlaylistPage {
             .unwrap_or_default()
             .into_iter()
             .enumerate()
-            .filter(|(_, v)| q.is_empty() || v.title.to_lowercase().contains(&q) || v.channel_name.to_lowercase().contains(&q))
+            .filter(|(_, v)| {
+                q.is_empty()
+                    || v.title.to_lowercase().contains(&q)
+                    || v.channel_name.to_lowercase().contains(&q)
+            })
             .collect();
         match self.sort {
             1 => v.sort_by(|a, b| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase())),
-            2 => v.sort_by(|a, b| b.1.duration_secs.unwrap_or(0).cmp(&a.1.duration_secs.unwrap_or(0))),
-            3 => v.sort_by(|a, b| a.1.duration_secs.unwrap_or(u64::MAX).cmp(&b.1.duration_secs.unwrap_or(u64::MAX))),
-            4 => v.sort_by(|a, b| a.1.channel_name.to_lowercase().cmp(&b.1.channel_name.to_lowercase())),
+            2 => v.sort_by(|a, b| {
+                b.1.duration_secs
+                    .unwrap_or(0)
+                    .cmp(&a.1.duration_secs.unwrap_or(0))
+            }),
+            3 => v.sort_by(|a, b| {
+                a.1.duration_secs
+                    .unwrap_or(u64::MAX)
+                    .cmp(&b.1.duration_secs.unwrap_or(u64::MAX))
+            }),
+            4 => v.sort_by(|a, b| {
+                a.1.channel_name
+                    .to_lowercase()
+                    .cmp(&b.1.channel_name.to_lowercase())
+            }),
             _ => {}
         }
         v
@@ -134,7 +164,10 @@ impl PlaylistPage {
     fn reload_local(&mut self) {
         if let Source::Local(id) = self.source {
             let pl = store::playlists().into_iter().find(|p| p.id == id);
-            self.title = pl.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "Playlist".into());
+            self.title = pl
+                .as_ref()
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "Playlist".into());
             self.protected = pl.as_ref().map(|p| p.protected).unwrap_or(false);
             let items = store::playlist_items(id);
             self.count_text = Some(tf!("{0} videos", items.len()));
@@ -170,7 +203,8 @@ impl PlaylistPage {
                             }
                             this.continuation = next_tok.clone();
                             // Pause while another page is on screen (e.g. Watch); rendering resumes it on Back.
-                            let more = next_tok.is_some() && crate::ui::app::is_current_page(cx.entity_id(), cx);
+                            let more = next_tok.is_some()
+                                && crate::ui::app::is_current_page(cx.entity_id(), cx);
                             if !more {
                                 this.loading_more = false;
                             }
@@ -244,18 +278,42 @@ impl PlaylistPage {
                     innertube::append_unique_videos(v, more);
                 }
                 cx.notify();
-                let watched: Vec<String> = this.videos.ready().map(|v| v.iter().filter(|v| is_watched(&v.id, cx)).map(|v| v.id.clone()).collect()).unwrap_or_default();
+                let watched: Vec<String> = this
+                    .videos
+                    .ready()
+                    .map(|v| {
+                        v.iter()
+                            .filter(|v| is_watched(&v.id, cx))
+                            .map(|v| v.id.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 if watched.is_empty() {
-                    toast(cx, format!("No watched videos in {}", this.title));
+                    toast(cx, tf!("No watched videos in {0}", this.title));
                     return;
                 }
                 let n = watched.len();
-                let body = format!("{n} watched {} will be removed from {}.", if n == 1 { "video" } else { "videos" }, this.title);
+                let body = tf!(
+                    if n == 1 {
+                        "{0} watched video will be removed from {1}."
+                    } else {
+                        "{0} watched videos will be removed from {1}."
+                    },
+                    n,
+                    this.title
+                );
                 let page = cx.entity().downgrade();
-                confirm("Remove watched videos?", &body, "Remove", window, cx, move |_, cx| {
-                    let ids = watched.clone();
-                    let _ = page.update(cx, |this, cx| this.do_remove_watched(ids, cx));
-                });
+                confirm(
+                    "Remove watched videos?",
+                    &body,
+                    "Remove",
+                    window,
+                    cx,
+                    move |_, cx| {
+                        let ids = watched.clone();
+                        let _ = page.update(cx, |this, cx| this.do_remove_watched(ids, cx));
+                    },
+                );
             });
         })
         .detach();
@@ -263,7 +321,14 @@ impl PlaylistPage {
 
     fn do_remove_watched(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
         let n = ids.len();
-        let done = format!("Removed {n} watched {}", if n == 1 { "video" } else { "videos" });
+        let done = tf!(
+            if n == 1 {
+                "Removed {0} watched video"
+            } else {
+                "Removed {0} watched videos"
+            },
+            n
+        );
         match &self.source {
             Source::Local(lid) => {
                 for id in &ids {
@@ -277,7 +342,9 @@ impl PlaylistPage {
                 let pid = pid.clone();
                 cx.spawn(async move |this, cx| {
                     let ids2 = ids.clone();
-                    let res = blocking(move || crate::api::auth::remove_many_from_playlist(&pid, &ids2)).await;
+                    let res =
+                        blocking(move || crate::api::auth::remove_many_from_playlist(&pid, &ids2))
+                            .await;
                     let _ = this.update(cx, |this, cx| {
                         match res {
                             Ok(()) => {
@@ -288,7 +355,10 @@ impl PlaylistPage {
                                 this.count_text = None;
                                 toast(cx, done);
                             }
-                            Err(_) => toast(cx, t("Couldn't remove the watched videos on your YouTube account")),
+                            Err(_) => toast(
+                                cx,
+                                t("Couldn't remove the watched videos on your YouTube account"),
+                            ),
                         }
                         cx.notify();
                     });
@@ -311,7 +381,9 @@ impl PlaylistPage {
                 let pid = pid.clone();
                 cx.spawn(async move |this, cx| {
                     let ids = vec![video_id.clone()];
-                    let res = blocking(move || crate::api::auth::remove_many_from_playlist(&pid, &ids)).await;
+                    let res =
+                        blocking(move || crate::api::auth::remove_many_from_playlist(&pid, &ids))
+                            .await;
                     let _ = this.update(cx, |this, cx| {
                         match res {
                             Ok(()) => {
@@ -324,7 +396,10 @@ impl PlaylistPage {
                                 }
                                 toast(cx, t("Removed from playlist"));
                             }
-                            Err(_) => toast(cx, t("Couldn't remove the video from your YouTube playlist")),
+                            Err(_) => toast(
+                                cx,
+                                t("Couldn't remove the video from your YouTube playlist"),
+                            ),
                         }
                         cx.notify();
                     });
@@ -341,8 +416,16 @@ impl PlaylistPage {
         }
     }
 
-    fn play(&mut self, shuffle: bool, start_idx: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(mut q) = self.videos.ready().cloned() else { return };
+    fn play(
+        &mut self,
+        shuffle: bool,
+        start_idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut q) = self.videos.ready().cloned() else {
+            return;
+        };
         if q.is_empty() {
             return;
         }
@@ -363,8 +446,20 @@ impl PlaylistPage {
         player(cx).update(cx, |p, cx| {
             p.set_playlist_queue(q, idx, continuation, authed, shuffle, cx);
         });
-        let list = if shuffle { None } else { Some(self.playlist_param()) };
-        navigate(Route::Watch { id: first, playlist: list, start: None }, window, cx);
+        let list = if shuffle {
+            None
+        } else {
+            Some(self.playlist_param())
+        };
+        navigate(
+            Route::Watch {
+                id: first,
+                playlist: list,
+                start: None,
+            },
+            window,
+            cx,
+        );
     }
 }
 
@@ -385,134 +480,266 @@ impl Render for PlaylistPage {
         }
         let videos = self.videos.ready().cloned().unwrap_or_default();
         let thumb = videos.first().map(|v| v.thumbnail.clone());
-        let local_id = if let Source::Local(id) = self.source { Some(id) } else { None };
+        let local_id = if let Source::Local(id) = self.source {
+            Some(id)
+        } else {
+            None
+        };
         let remote_info = self.info.clone();
-        let saved = remote_info.as_ref().map(|i| store::is_playlist_saved(&i.id)).unwrap_or(false);
+        let saved = remote_info
+            .as_ref()
+            .map(|i| store::is_playlist_saved(&i.id))
+            .unwrap_or(false);
         let owner = self.owner.clone();
-        let header = div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .gap_4()
-            .w(px(360.))
-            .p_6()
-            .rounded_2xl()
-            .bg(linear_gradient(180., linear_color_stop(p.hover, 0.), linear_color_stop(p.bg, 1.)))
-            .child(
-                div()
-                    .w_full()
-                    .h(px(176.))
-                    .rounded_xl()
-                    .overflow_hidden()
-                    .bg(p.surface)
-                    .when_some(thumb, |d, t| d.child(img(SharedString::from(t)).size_full().rounded_xl().object_fit(ObjectFit::Cover))),
-            )
-            .child(
-                selectable_text(
-                    "pl-title",
-                    if self.protected || (local_id.is_none() && self.info.is_none()) {
-                        t(&self.title).to_string()
-                    } else {
-                        self.title.clone()
-                    },
-                )
-                .text_2xl()
-                .font_weight(FontWeight::BOLD)
-                .text_color(p.text),
-            )
-            .when_some(owner, |d, (name, cid)| {
-                d.child(
+        let rtl = LayoutDirection::global(cx).is_rtl();
+        let stacked = rtl && content_width(cx) < px(740.);
+        let header =
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap_4()
+                .w(px(360.))
+                .when(stacked, |d| d.w_full())
+                .p_6()
+                .rounded_2xl()
+                .bg(linear_gradient(
+                    180.,
+                    linear_color_stop(p.hover, 0.),
+                    linear_color_stop(p.bg, 1.),
+                ))
+                .child(
                     div()
-                        .id("pl-owner")
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(p.text)
-                        .cursor_pointer()
-                        .child(gpui_kit::base::SelectableText::new("pl-owner-name", if local_id.is_some() { t("You").to_string() } else { name }))
-                        .on_click(move |_, window, cx| {
-                            if has_text_selection(window, cx) {
-                                return;
-                            }
-                            if let Some(c) = cid.clone() {
-                                navigate(Route::Channel(c), window, cx)
-                            }
+                        .w_full()
+                        .h(px(176.))
+                        .rounded_xl()
+                        .overflow_hidden()
+                        .bg(p.surface)
+                        .when_some(thumb, |d, t| {
+                            d.child(
+                                img(SharedString::from(t))
+                                    .size_full()
+                                    .rounded_xl()
+                                    .object_fit(ObjectFit::Cover),
+                            )
                         }),
                 )
-            })
-            .child({
-                let total: u64 = videos.iter().filter_map(|v| v.duration_secs).sum();
-                let count = self.count_text.clone().unwrap_or_else(|| tf!("{0} videos", videos.len()));
-                let dur = if total >= 3600 { tf!("{0} h {1} min", total / 3600, (total % 3600) / 60) } else if total > 0 { tf!("{0} min", total / 60) } else { String::new() };
-                selectable_text("pl-meta", if dur.is_empty() { count } else { format!("{count}, {dur}") }).text_xs().text_color(p.text2)
-            })
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(icon_button("pl-dl", "download", cx).bg(p.chip).on_click(cx.listener(|this, _, _, cx| {
-                        let vids = this.videos.ready().cloned().unwrap_or_default();
-                        crate::downloads::start_many(vids, cx);
-                    })))
-                    .child(icon_button("pl-share", "share-2", cx).bg(p.chip).on_click(cx.listener(|this, _, _, cx| {
-                        if let Source::Remote(id) = &this.source {
-                            copy_to_clipboard(format!("https://www.youtube.com/playlist?list={id}"), cx);
-                        }
-                    })))
-                    .when_some(remote_info, |d, info| {
-                        d.child(
-                            icon_button("pl-save", if saved { "bookmark-check" } else { "bookmark-plus" }, cx).bg(p.chip).on_click(move |_, _, cx| {
-                                store::save_playlist(&info, !saved);
-                                toast(cx, if saved { "Removed from library" } else { "Saved to library" });
-                                cx.refresh_windows();
-                            }),
-                        )
-                    })
-                    .when(self.is_watch_later(), |d| {
-                        d.child(pill("pl-rm-watched", Some("list-x"), "Remove watched", cx).on_click(cx.listener(|this, _, window, cx| this.remove_watched(window, cx))))
-                    })
-                    .when_some(local_id.filter(|_| !self.protected), |d, id| {
-                        d.child(icon_button("pl-rename", "pencil", cx).bg(p.chip).on_click(cx.listener(move |_, _, window, cx| {
-                            prompt_text("Rename playlist", "Name", window, cx, move |name, _, cx| {
-                                store::playlist_rename(id, &name);
-                                cx.refresh_windows();
-                            });
-                        })))
-                        .child(icon_button("pl-del", "trash-2", cx).bg(p.chip).on_click(move |_, window, cx| {
-                            confirm("Delete playlist?", "This cannot be undone.", "Delete", window, cx, move |window, cx| {
-                                store::playlist_delete(id);
-                                navigate(Route::Library, window, cx);
-                            });
-                        }))
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        pill("pl-play", Some("play"), "Play all", cx)
-                            .flex_1()
-                            .justify_center()
-                            .bg(p.chip_active_bg)
-                            .text_color(p.chip_active_fg)
-                            .on_click(cx.listener(|this, _, window, cx| this.play(false, 0, window, cx))),
+                .child(
+                    selectable_text(
+                        "pl-title",
+                        if self.protected || (local_id.is_none() && self.info.is_none()) {
+                            t(&self.title).to_string()
+                        } else {
+                            self.title.clone()
+                        },
                     )
-                    .child(pill("pl-shuffle", Some("shuffle"), "Shuffle", cx).flex_1().justify_center().on_click(cx.listener(|this, _, window, cx| this.play(true, 0, window, cx)))),
-            )
-            .when_some(self.description.clone().filter(|d| !d.is_empty()), |d, desc| d.child(div().text_xs().text_color(p.text2).child(desc)));
+                    .text_2xl()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(p.text),
+                )
+                .when_some(owner, |d, (name, cid)| {
+                    d.child(
+                        div()
+                            .id("pl-owner")
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.text)
+                            .cursor_pointer()
+                            .child(gpui_kit::base::SelectableText::new(
+                                "pl-owner-name",
+                                if local_id.is_some() {
+                                    t("You").to_string()
+                                } else {
+                                    name
+                                },
+                            ))
+                            .on_click(move |_, window, cx| {
+                                if has_text_selection(window, cx) {
+                                    return;
+                                }
+                                if let Some(c) = cid.clone() {
+                                    navigate(Route::Channel(c), window, cx)
+                                }
+                            }),
+                    )
+                })
+                .child({
+                    let total: u64 = videos.iter().filter_map(|v| v.duration_secs).sum();
+                    let raw_count = self
+                        .count_text
+                        .clone()
+                        .unwrap_or_else(|| tf!(selectable: "{0} videos", videos.len()));
+                    let count =
+                        metrics::from_text_selectable(MetricKind::PlaylistVideos, Some(&raw_count))
+                            .unwrap_or(raw_count);
+                    let dur = if total >= 3600 {
+                        tf!(selectable: "{0} h {1} min", total / 3600, (total % 3600) / 60)
+                    } else if total > 0 {
+                        tf!(selectable: "{0} min", total / 60)
+                    } else {
+                        String::new()
+                    };
+                    let row = if rtl {
+                        div()
+                            .flex_row_dir(cx)
+                            .flex_wrap()
+                            .gap_2()
+                            .child(selectable_text("pl-count", count))
+                            .when(!dur.is_empty(), |d| {
+                                d.child(selectable_text("pl-duration", dur))
+                            })
+                    } else {
+                        selectable_text(
+                            "pl-meta",
+                            if dur.is_empty() {
+                                count
+                            } else {
+                                format!("{count}, {dur}")
+                            },
+                        )
+                    };
+                    row.text_xs().text_color(p.text2)
+                })
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .gap_2()
+                        .when(rtl, |d| d.flex_wrap())
+                        .child(icon_button("pl-dl", "download", cx).bg(p.chip).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                let vids = this.videos.ready().cloned().unwrap_or_default();
+                                crate::downloads::start_many(vids, cx);
+                            }),
+                        ))
+                        .child(icon_button("pl-share", "share-2", cx).bg(p.chip).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                if let Source::Remote(id) = &this.source {
+                                    copy_to_clipboard(
+                                        format!("https://www.youtube.com/playlist?list={id}"),
+                                        cx,
+                                    );
+                                }
+                            }),
+                        ))
+                        .when_some(remote_info, |d, info| {
+                            d.child(
+                                icon_button(
+                                    "pl-save",
+                                    if saved {
+                                        "bookmark-check"
+                                    } else {
+                                        "bookmark-plus"
+                                    },
+                                    cx,
+                                )
+                                .bg(p.chip)
+                                .on_click(move |_, _, cx| {
+                                    store::save_playlist(&info, !saved);
+                                    toast(
+                                        cx,
+                                        t(if saved {
+                                            "Removed from library"
+                                        } else {
+                                            "Saved to library"
+                                        }),
+                                    );
+                                    cx.refresh_windows();
+                                }),
+                            )
+                        })
+                        .when(self.is_watch_later(), |d| {
+                            d.child(
+                                pill("pl-rm-watched", Some("list-x"), "Remove watched", cx)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.remove_watched(window, cx)
+                                    })),
+                            )
+                        })
+                        .when_some(local_id.filter(|_| !self.protected), |d, id| {
+                            d.child(icon_button("pl-rename", "pencil", cx).bg(p.chip).on_click(
+                                cx.listener(move |_, _, window, cx| {
+                                    prompt_text(
+                                        "Rename playlist",
+                                        "Name",
+                                        window,
+                                        cx,
+                                        move |name, _, cx| {
+                                            store::playlist_rename(id, &name);
+                                            cx.refresh_windows();
+                                        },
+                                    );
+                                }),
+                            ))
+                            .child(
+                                icon_button("pl-del", "trash-2", cx).bg(p.chip).on_click(
+                                    move |_, window, cx| {
+                                        confirm(
+                                            "Delete playlist?",
+                                            "This cannot be undone.",
+                                            "Delete",
+                                            window,
+                                            cx,
+                                            move |window, cx| {
+                                                store::playlist_delete(id);
+                                                navigate(Route::Library, window, cx);
+                                            },
+                                        );
+                                    },
+                                ),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .gap_2()
+                        .child(
+                            pill("pl-play", Some("play"), "Play all", cx)
+                                .flex_1()
+                                .justify_center()
+                                .bg(p.chip_active_bg)
+                                .text_color(p.chip_active_fg)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.play(false, 0, window, cx)
+                                })),
+                        )
+                        .child(
+                            pill("pl-shuffle", Some("shuffle"), "Shuffle", cx)
+                                .flex_1()
+                                .justify_center()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.play(true, 0, window, cx)
+                                })),
+                        ),
+                )
+                .when_some(
+                    self.description.clone().filter(|d| !d.is_empty()),
+                    |d, desc| d.child(div().text_xs().text_color(p.text2).child(desc)),
+                );
 
         let list: AnyElement = match &self.videos {
             Load::Loading => spinner(cx).into_any_element(),
             Load::Error(e) => error_state(e, cx).into_any_element(),
-            Load::Ready(v) if v.is_empty() => empty_state("list-video", "No videos in this playlist yet", "", cx).into_any_element(),
+            Load::Ready(v) if v.is_empty() => {
+                empty_state("list-video", "No videos in this playlist yet", "", cx)
+                    .into_any_element()
+            }
             Load::Ready(_) => {
                 let shown = self.visible(cx);
                 let sort = self.sort;
-                let mut bar = div().flex().items_center().gap_2().pb_3().mb_1().border_b_1().border_color(p.border);
+                let mut bar = div()
+                    .flex_row_dir(cx)
+                    .items_center()
+                    .gap_2()
+                    .pb_3()
+                    .mb_1()
+                    .border_b_1()
+                    .border_color(p.border)
+                    .when(rtl, |d| d.flex_wrap());
                 if let Some(f) = &self.filter {
                     bar = bar.child(
                         div()
-                            .flex()
+                            .flex_row_dir(cx)
                             .items_center()
                             .gap_2()
                             .w(px(260.))
@@ -521,18 +748,50 @@ impl Render for PlaylistPage {
                             .rounded_full()
                             .bg(p.chip)
                             .child(icon("search").size_4().text_color(p.text2))
-                            .child(div().flex_1().child(gpui_kit::component::input::Input::new(f).appearance(false).cleanable(true))),
+                            .child(
+                                div().flex_1().child(
+                                    gpui_kit::component::input::Input::new(f)
+                                        .appearance(false)
+                                        .cleanable(true),
+                                ),
+                            ),
                     );
                 }
-                for (k, label) in [(0u8, "Default"), (1, "Title"), (2, "Longest"), (3, "Shortest"), (4, "Channel")] {
-                    bar = bar.child(chip(SharedString::from(format!("pl-sort-{k}")), t(label), sort == k, cx).on_click(cx.listener(move |this, _, _, cx| {
-                        this.sort = k;
-                        cx.notify();
-                    })));
+                for (k, label) in [
+                    (0u8, "Default"),
+                    (1, "Title"),
+                    (2, "Longest"),
+                    (3, "Shortest"),
+                    (4, "Channel"),
+                ] {
+                    bar = bar.child(
+                        chip(
+                            SharedString::from(format!("pl-sort-{k}")),
+                            t(label),
+                            sort == k,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.sort = k;
+                            cx.notify();
+                        })),
+                    );
                 }
-                let mut col = div().flex().flex_col().gap_1().flex_1().min_w_0().child(bar);
+                let mut col = div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .flex_1()
+                    .min_w_0()
+                    .child(bar);
                 if shown.is_empty() {
-                    col = col.child(div().py_8().text_sm().text_color(p.text2).child(t("No videos match")));
+                    col = col.child(
+                        div()
+                            .py_8()
+                            .text_sm()
+                            .text_color(p.text2)
+                            .child(t("No videos match")),
+                    );
                 }
                 let vs = &shown;
                 // a list of the user's own: local, or an account playlist the account can edit
@@ -540,9 +799,14 @@ impl Render for PlaylistPage {
                 for (i, v) in vs.iter().map(|(i, v)| (*i, v)) {
                     let extra = if editable {
                         let (page, rid) = (cx.entity().downgrade(), v.id.clone());
-                        vec![crate::ui::app::MenuItem::new("list-x", t("Remove from playlist"), move |_, cx| {
-                            let _ = page.update(cx, |this, cx| this.remove_video(rid.clone(), cx));
-                        })]
+                        vec![crate::ui::app::MenuItem::new(
+                            "list-x",
+                            t("Remove from playlist"),
+                            move |_, cx| {
+                                let _ =
+                                    page.update(cx, |this, cx| this.remove_video(rid.clone(), cx));
+                            },
+                        )]
                     } else {
                         Vec::new()
                     };
@@ -550,7 +814,14 @@ impl Render for PlaylistPage {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(div().w_6().text_sm().text_color(p.text2).text_center().child((i + 1).to_string()))
+                        .child(
+                            div()
+                                .w_6()
+                                .text_sm()
+                                .text_color(p.text2)
+                                .text_center()
+                                .child((i + 1).to_string()),
+                        )
                         .child(div().flex_1().min_w_0().child(compact_row_with(
                             v,
                             false,
@@ -571,22 +842,45 @@ impl Render for PlaylistPage {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .child(icon_button(SharedString::from(format!("up-{i}")), "chevron-up", cx).size_7().on_click(cx.listener(move |this, _, _, cx| {
-                                        store::playlist_move(lid, &a, -1);
-                                        this.reload_local();
-                                        cx.notify();
-                                    })))
-                                    .child(icon_button(SharedString::from(format!("dn-{i}")), "chevron-down", cx).size_7().on_click(cx.listener(move |this, _, _, cx| {
-                                        store::playlist_move(lid, &b, 1);
-                                        this.reload_local();
-                                        cx.notify();
-                                    }))),
+                                    .child(
+                                        icon_button(
+                                            SharedString::from(format!("up-{i}")),
+                                            "chevron-up",
+                                            cx,
+                                        )
+                                        .size_7()
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                store::playlist_move(lid, &a, -1);
+                                                this.reload_local();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        icon_button(
+                                            SharedString::from(format!("dn-{i}")),
+                                            "chevron-down",
+                                            cx,
+                                        )
+                                        .size_7()
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                store::playlist_move(lid, &b, 1);
+                                                this.reload_local();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ),
                             )
-                            .child(icon_button(SharedString::from(format!("rm-{i}")), "trash-2", cx).on_click(cx.listener(move |this, _, _, cx| {
-                                store::playlist_remove(lid, &c);
-                                this.reload_local();
-                                cx.notify();
-                            })))
+                            .child(
+                                icon_button(SharedString::from(format!("rm-{i}")), "trash-2", cx)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        store::playlist_remove(lid, &c);
+                                        this.reload_local();
+                                        cx.notify();
+                                    })),
+                            )
                         });
                     col = col.child(row);
                 }
@@ -596,6 +890,17 @@ impl Render for PlaylistPage {
                 col.into_any_element()
             }
         };
-        page_scroll("pl-scroll", &self.scroll).child(div().flex().items_start().gap_6().px_6().pt_6().pb_24().child(header).child(list))
+        page_scroll("pl-scroll", &self.scroll).child(
+            div()
+                .flex_row_dir(cx)
+                .items_start()
+                .gap_6()
+                .px_6()
+                .pt_6()
+                .pb_24()
+                .when(stacked, |d| d.flex_col().items_stretch())
+                .child(header)
+                .child(list),
+        )
     }
 }

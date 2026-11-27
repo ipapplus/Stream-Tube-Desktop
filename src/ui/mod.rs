@@ -6,14 +6,71 @@ pub mod image_cache;
 pub mod pages;
 pub mod pip;
 pub mod slot;
-pub mod transcript_menu;
 #[cfg(target_os = "linux")]
 mod topbar_drag;
+pub mod transcript_menu;
 pub mod widgets;
 
-use gpui_kit::*;
+pub use gpui_kit::base::{LayoutDirection, LogicalStyledExt};
 pub use gpui_kit::prelude::*;
+use gpui_kit::*;
 use std::sync::Arc;
+
+/// Arrow that points back in the current direction.
+pub fn back_nav_icon(direction: LayoutDirection) -> &'static str {
+    if direction.is_rtl() {
+        "arrow-right"
+    } else {
+        "arrow-left"
+    }
+}
+
+/// Chevron that points forward in the current direction.
+pub fn forward_nav_chevron(direction: LayoutDirection) -> &'static str {
+    if direction.is_rtl() {
+        "chevron-left"
+    } else {
+        "chevron-right"
+    }
+}
+
+/// Chevron that points toward the previous level in the current direction.
+pub fn menu_back_chevron(direction: LayoutDirection) -> &'static str {
+    if direction.is_rtl() {
+        "chevron-right"
+    } else {
+        "chevron-left"
+    }
+}
+
+/// Chevron that points toward a submenu in the current direction.
+pub fn menu_forward_chevron(direction: LayoutDirection) -> &'static str {
+    if direction.is_rtl() {
+        "chevron-left"
+    } else {
+        "chevron-right"
+    }
+}
+
+#[cfg(test)]
+mod direction_tests {
+    use super::{
+        LayoutDirection, back_nav_icon, forward_nav_chevron, menu_back_chevron,
+        menu_forward_chevron,
+    };
+
+    #[test]
+    fn direction_icons_follow_the_interface_direction() {
+        assert_eq!(back_nav_icon(LayoutDirection::Ltr), "arrow-left");
+        assert_eq!(back_nav_icon(LayoutDirection::Rtl), "arrow-right");
+        assert_eq!(forward_nav_chevron(LayoutDirection::Ltr), "chevron-right");
+        assert_eq!(forward_nav_chevron(LayoutDirection::Rtl), "chevron-left");
+        assert_eq!(menu_back_chevron(LayoutDirection::Ltr), "chevron-left");
+        assert_eq!(menu_back_chevron(LayoutDirection::Rtl), "chevron-right");
+        assert_eq!(menu_forward_chevron(LayoutDirection::Ltr), "chevron-right");
+        assert_eq!(menu_forward_chevron(LayoutDirection::Rtl), "chevron-left");
+    }
+}
 
 // ───────────────────────── palette ─────────────────────────
 
@@ -88,13 +145,25 @@ pub fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
     let s = crate::store::settings_snapshot();
     let dark = match s.theme.as_str() {
         "light" => false,
-        "system" => window.as_ref().map(|w| matches!(w.appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark)).unwrap_or(true),
+        "system" => window
+            .as_ref()
+            .map(|w| {
+                matches!(
+                    w.appearance(),
+                    WindowAppearance::Dark | WindowAppearance::VibrantDark
+                )
+            })
+            .unwrap_or(true),
         _ => true,
     };
     let p = Pal::new(dark, s.accent);
     cx.set_global(p);
     gpui_kit::component::Theme::change(
-        if dark { gpui_kit::component::ThemeMode::Dark } else { gpui_kit::component::ThemeMode::Light },
+        if dark {
+            gpui_kit::component::ThemeMode::Dark
+        } else {
+            gpui_kit::component::ThemeMode::Light
+        },
         window,
         cx,
     );
@@ -109,13 +178,18 @@ pub fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
 // ───────────────────────── icons ─────────────────────────
 
 pub fn icon(name: &str) -> Svg {
-    svg().path(SharedString::from(format!("icons/{name}.svg"))).flex_none().size_5()
+    svg()
+        .path(SharedString::from(format!("icons/{name}.svg")))
+        .flex_none()
+        .size_5()
 }
 
 // ───────────────────────── background work ─────────────────────────
 
 /// Runs blocking work on a dedicated OS thread and returns a future for its result.
-pub fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> impl std::future::Future<Output = T> {
+pub fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> impl std::future::Future<Output = T> {
     let (tx, rx) = futures::channel::oneshot::channel();
     std::thread::spawn(move || {
         let _ = tx.send(f());
@@ -131,7 +205,9 @@ pub struct UreqHttp {
 
 impl UreqHttp {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { ua: http_client::http::HeaderValue::from_static(crate::api::http::BROWSER_UA) })
+        Arc::new(Self {
+            ua: http_client::http::HeaderValue::from_static(crate::api::http::BROWSER_UA),
+        })
     }
 }
 
@@ -147,7 +223,10 @@ impl http_client::HttpClient for UreqHttp {
     fn send(
         &self,
         req: http_client::Request<http_client::AsyncBody>,
-    ) -> futures::future::BoxFuture<'static, anyhow::Result<http_client::Response<http_client::AsyncBody>>> {
+    ) -> futures::future::BoxFuture<
+        'static,
+        anyhow::Result<http_client::Response<http_client::AsyncBody>>,
+    > {
         let uri = req.uri().to_string();
         Box::pin(async move {
             let bytes = blocking(move || crate::api::http::get_bytes(&uri, &[])).await?;
@@ -203,18 +282,33 @@ pub fn toast_with_action(
     toast_with_actions(cx, text, action.into_iter().collect());
 }
 
-pub fn toast_with_actions(cx: &mut App, text: impl Into<SharedString>, mut actions: Vec<(SharedString, Arc<dyn Fn(&mut Window, &mut App)>)>) {
-    let action = if actions.is_empty() { None } else { Some(actions.remove(0)) };
+pub fn toast_with_actions(
+    cx: &mut App,
+    text: impl Into<SharedString>,
+    mut actions: Vec<(SharedString, Arc<dyn Fn(&mut Window, &mut App)>)>,
+) {
+    let action = if actions.is_empty() {
+        None
+    } else {
+        Some(actions.remove(0))
+    };
     let t = cx.default_global::<Toasts>();
     t.next += 1;
     let id = t.next;
-    t.items.push(Toast { id, text: text.into(), action, extra: actions });
+    t.items.push(Toast {
+        id,
+        text: text.into(),
+        action,
+        extra: actions,
+    });
     if t.items.len() > 4 {
         t.items.remove(0);
     }
     cx.refresh_windows();
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
+        cx.background_executor()
+            .timer(std::time::Duration::from_secs(4))
+            .await;
         let _ = cx.update(|cx| {
             cx.default_global::<Toasts>().items.retain(|x| x.id != id);
             cx.refresh_windows();
@@ -243,14 +337,23 @@ pub fn icon_button(id: impl Into<ElementId>, name: &str, cx: &App) -> Stateful<D
 }
 
 /// Pill button with optional icon.
-pub fn pill(id: impl Into<ElementId>, icon_name: Option<&str>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
+pub fn pill(
+    id: impl Into<ElementId>,
+    icon_name: Option<&str>,
+    label: impl Into<SharedString>,
+    cx: &App,
+) -> Stateful<Div> {
     let p = pal(cx);
     let label: SharedString = label.into();
     let translated = crate::i18n::t(&label);
-    let label = if translated != label.as_ref() { SharedString::from(translated.to_owned()) } else { label };
+    let label = if translated != label.as_ref() {
+        SharedString::from(translated.to_owned())
+    } else {
+        label
+    };
     div()
         .id(id.into())
-        .flex()
+        .flex_row_dir(cx)
         .flex_none()
         .items_center()
         .gap_2()
@@ -263,11 +366,18 @@ pub fn pill(id: impl Into<ElementId>, icon_name: Option<&str>, label: impl Into<
         .font_weight(FontWeight::MEDIUM)
         .text_color(p.text)
         .hover(move |s| s.bg(p.hover))
-        .when_some(icon_name.map(str::to_string), |d, n| d.child(icon(&n).size_4().text_color(p.text)))
+        .when_some(icon_name.map(str::to_string), |d, n| {
+            d.child(icon(&n).size_4().text_color(p.text))
+        })
         .when(!label.is_empty(), |d| d.child(label))
 }
 
-pub fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, active: bool, cx: &App) -> Stateful<Div> {
+pub fn chip(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+    cx: &App,
+) -> Stateful<Div> {
     let p = pal(cx);
     div()
         .id(id.into())
@@ -278,28 +388,29 @@ pub fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, active: bo
         .text_sm()
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
-        .when(active, |d| d.bg(p.chip_active_bg).text_color(p.chip_active_fg))
-        .when(!active, move |d| d.bg(p.chip).text_color(p.text).hover(move |s| s.bg(p.hover)))
+        .when(active, |d| {
+            d.bg(p.chip_active_bg).text_color(p.chip_active_fg)
+        })
+        .when(!active, move |d| {
+            d.bg(p.chip)
+                .text_color(p.text)
+                .hover(move |s| s.bg(p.hover))
+        })
         .child(label.into())
 }
 
 pub fn spinner(cx: &App) -> impl IntoElement {
     let p = pal(cx);
-    div()
-        .flex()
-        .w_full()
-        .justify_center()
-        .py_8()
-        .child(
-            icon("loader-circle")
-                .size_8()
-                .text_color(p.text2)
-                .with_animation(
-                    "spin",
-                    Animation::new(std::time::Duration::from_millis(900)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                ),
-        )
+    div().flex().w_full().justify_center().py_8().child(
+        icon("loader-circle")
+            .size_8()
+            .text_color(p.text2)
+            .with_animation(
+                "spin",
+                Animation::new(std::time::Duration::from_millis(900)).repeat(),
+                |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+            ),
+    )
 }
 
 pub fn localize_placeholder(
@@ -325,12 +436,30 @@ pub fn empty_state(icon_name: &str, title: &str, subtitle: &str, cx: &App) -> Di
         .py_20()
         .w_full()
         .child(icon(icon_name).size_16().text_color(p.text3))
-        .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(crate::i18n::t(title).to_string()))
-        .child(div().text_sm().text_color(p.text2).max_w(px(480.)).text_center().child(subtitle.to_string()))
+        .child(
+            div()
+                .text_xl()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.text)
+                .child(crate::i18n::t(title).to_string()),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(p.text2)
+                .max_w(px(480.))
+                .text_center()
+                .child(subtitle.to_string()),
+        )
 }
 
 pub fn error_state(err: &str, cx: &App) -> Div {
-    empty_state("circle-alert", "Something went wrong", &friendly_error(err), cx)
+    empty_state(
+        "circle-alert",
+        "Something went wrong",
+        &friendly_error(err),
+        cx,
+    )
 }
 
 /// One readable line instead of raw HTTP bodies or error chains.
@@ -345,11 +474,23 @@ pub fn friendly_error(err: &str) -> String {
     match status {
         Some(404) => return t("This page isn't available.").into(),
         Some(429) => return t("YouTube is rate limiting requests. Try again in a minute.").into(),
-        Some(s) if (400..500).contains(&s) => return tf!("YouTube rejected the request (HTTP {0}).", s),
+        Some(s) if (400..500).contains(&s) => {
+            return tf!("YouTube rejected the request (HTTP {0}).", s);
+        }
         Some(s) if s >= 500 => return tf!("YouTube had a problem (HTTP {0}). Try again.", s),
         _ => {}
     }
-    if ["dns", "timed out", "timeout", "connect", "network", "resolve"].iter().any(|k| lower.contains(k)) {
+    if [
+        "dns",
+        "timed out",
+        "timeout",
+        "connect",
+        "network",
+        "resolve",
+    ]
+    .iter()
+    .any(|k| lower.contains(k))
+    {
         return t("Couldn't reach YouTube. Check your connection.").into();
     }
     if lower.contains("recording is not available") {
@@ -372,7 +513,11 @@ pub fn friendly_error(err: &str) -> String {
     let line = ["visionOS: ", "Android VR: ", "Innertube: ", "yt-dlp: "]
         .iter()
         .fold(line, |l, p| l.strip_prefix(p).unwrap_or(l));
-    if line.chars().count() > 160 { format!("{}…", line.chars().take(160).collect::<String>()) } else { line.to_string() }
+    if line.chars().count() > 160 {
+        format!("{}…", line.chars().take(160).collect::<String>())
+    } else {
+        line.to_string()
+    }
 }
 
 pub fn avatar(url: Option<&str>, size: Pixels, name: &str, cx: &App) -> AnyElement {
@@ -387,8 +532,24 @@ pub fn avatar(url: Option<&str>, size: Pixels, name: &str, cx: &App) -> AnyEleme
             .rounded_full()
             .object_fit(ObjectFit::Cover)
             .with_fallback({
-                let n = name.chars().next().unwrap_or('?').to_uppercase().to_string();
-                move || div().size_full().rounded_full().bg(rgb(0x5c6bc0)).flex().items_center().justify_center().text_color(white()).child(n.clone()).into_any_element()
+                let n = name
+                    .chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .to_string();
+                move || {
+                    div()
+                        .size_full()
+                        .rounded_full()
+                        .bg(rgb(0x5c6bc0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(white())
+                        .child(n.clone())
+                        .into_any_element()
+                }
             })
             .into_any_element(),
         _ => div()
@@ -400,7 +561,13 @@ pub fn avatar(url: Option<&str>, size: Pixels, name: &str, cx: &App) -> AnyEleme
             .items_center()
             .justify_center()
             .text_color(p.text)
-            .child(name.chars().next().unwrap_or('?').to_uppercase().to_string())
+            .child(
+                name.chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .to_string(),
+            )
             .into_any_element(),
     }
 }
@@ -423,7 +590,9 @@ pub const BRAND_VIOLET: u32 = 0x7A3CF5;
 /// The logo, in the current accent colour.
 pub fn logo(size: Pixels) -> Img {
     let accent = app_icon::icon_accent(crate::store::settings_snapshot().accent);
-    img(SharedString::from(format!("brand/logo-{accent:06x}.svg"))).size(size).flex_none()
+    img(SharedString::from(format!("brand/logo-{accent:06x}.svg")))
+        .size(size)
+        .flex_none()
 }
 
 /// "Stream Tube" wordmark next to the logo.

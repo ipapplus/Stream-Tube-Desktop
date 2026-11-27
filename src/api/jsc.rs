@@ -47,7 +47,9 @@ pub fn player() -> Result<Arc<Player>> {
     let player = match known {
         Some(p) => p,
         None => {
-            let js = http::get_text(&format!("https://www.youtube.com/s/player/{id}/tv-player-ias.vflset/tv-player-ias.js"))?;
+            let js = http::get_text(&format!(
+                "https://www.youtube.com/s/player/{id}/tv-player-ias.vflset/tv-player-ias.js"
+            ))?;
             let sts = signature_timestamp(&js);
             Arc::new(Player { id, js, sts })
         }
@@ -58,15 +60,25 @@ pub fn player() -> Result<Arc<Player>> {
 
 /// `.../s/player/<id>/...` from the iframe API script (slashes are escaped there).
 fn player_id(api: &str) -> Option<String> {
-    let i = api.find("player\\/").map(|i| i + 8).or_else(|| api.find("player/").map(|i| i + 7))?;
-    let id: String = api[i..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    let i = api
+        .find("player\\/")
+        .map(|i| i + 8)
+        .or_else(|| api.find("player/").map(|i| i + 7))?;
+    let id: String = api[i..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
     (id.len() == 8).then_some(id)
 }
 
 fn signature_timestamp(js: &str) -> Option<u64> {
     let i = js.find("signatureTimestamp")? + "signatureTimestamp".len();
     let rest = js[i..].trim_start_matches([':', '=']);
-    rest.chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+    rest.chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .ok()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,7 +107,11 @@ impl Runtime {
     }
 
     fn embedded() -> Runtime {
-        Runtime { kind: Kind::Embedded, path: PathBuf::new(), version: (0, 0, 0) }
+        Runtime {
+            kind: Kind::Embedded,
+            path: PathBuf::new(),
+            version: (0, 0, 0),
+        }
     }
 }
 
@@ -128,11 +144,24 @@ fn extra_dirs() -> Vec<PathBuf> {
         }
         if let Some(h) = &home {
             dirs.push(h.join(".deno").join("bin"));
-            dirs.push(h.join("AppData").join("Local").join("Programs").join("nodejs"));
+            dirs.push(
+                h.join("AppData")
+                    .join("Local")
+                    .join("Programs")
+                    .join("nodejs"),
+            );
             dirs.push(h.join("scoop").join("shims"));
         }
     } else {
-        dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/snap/bin"].map(PathBuf::from));
+        dirs.extend(
+            [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/snap/bin",
+            ]
+            .map(PathBuf::from),
+        );
         if let Some(h) = &home {
             dirs.push(h.join(".deno").join("bin"));
             dirs.push(h.join(".volta").join("bin"));
@@ -150,10 +179,15 @@ fn extra_dirs() -> Vec<PathBuf> {
 }
 
 fn find_runtime() -> Option<Runtime> {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
     dirs.extend(extra_dirs());
     let mut best: Option<Runtime> = None;
-    for (kind, exe, min) in [(Kind::Deno, "deno", (2, 3, 0)), (Kind::Node, "node", (22, 0, 0))] {
+    for (kind, exe, min) in [
+        (Kind::Deno, "deno", (2, 3, 0)),
+        (Kind::Node, "node", (22, 0, 0)),
+    ] {
         for dir in &dirs {
             let mut path = dir.join(exe);
             if cfg!(windows) {
@@ -162,13 +196,22 @@ fn find_runtime() -> Option<Runtime> {
             if !path.is_file() {
                 continue;
             }
-            let Some(version) = probe_version(&path) else { continue };
+            let Some(version) = probe_version(&path) else {
+                continue;
+            };
             if version < min {
                 continue;
             }
-            let r = Runtime { kind, path, version };
+            let r = Runtime {
+                kind,
+                path,
+                version,
+            };
             // Deno is preferred: it needs no permission flags and starts faster
-            if best.as_ref().is_none_or(|b| b.kind == Kind::Node && kind == Kind::Deno) {
+            if best
+                .as_ref()
+                .is_none_or(|b| b.kind == Kind::Node && kind == Kind::Deno)
+            {
                 best = Some(r);
             }
             break;
@@ -187,13 +230,14 @@ fn probe_version(path: &std::path::Path) -> Option<(u64, u64, u64)> {
 
 /// The first `a.b.c` in text such as `deno 2.9.8 (stable, ...)` or `v24.20.0`.
 fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
-    text.split(|c: char| c.is_whitespace() || c == 'v' || c == '(' || c == ')').find_map(|tok| {
-        let mut it = tok.split('.').map(|p| p.parse::<u64>().ok());
-        match (it.next(), it.next(), it.next()) {
-            (Some(Some(a)), Some(Some(b)), Some(Some(c))) => Some((a, b, c)),
-            _ => None,
-        }
-    })
+    text.split(|c: char| c.is_whitespace() || c == 'v' || c == '(' || c == ')')
+        .find_map(|tok| {
+            let mut it = tok.split('.').map(|p| p.parse::<u64>().ok());
+            match (it.next(), it.next(), it.next()) {
+                (Some(Some(a)), Some(Some(b)), Some(Some(c))) => Some((a, b, c)),
+                _ => None,
+            }
+        })
 }
 
 /// The solver's lib and core scripts.
@@ -230,7 +274,9 @@ fn scripts() -> Result<Scripts> {
                 Ok(code)
             }
             Ok(_) => Err(anyhow!("unexpected content for {name}")),
-            Err(e) => std::fs::read_to_string(&path).map_err(|_| e).context(format!("downloading {name}")),
+            Err(e) => std::fs::read_to_string(&path)
+                .map_err(|_| e)
+                .context(format!("downloading {name}")),
         }
     };
     let s = Arc::new((load(LIB_SCRIPT)?, load(CORE_SCRIPT)?));
@@ -302,26 +348,55 @@ pub fn solve(player: &Player, n: &[String], sig: &[String]) -> Result<Solved> {
     let stdout = run(&rt, program)?;
     let v: Value = serde_json::from_str(stdout.trim()).context("solver output is not JSON")?;
     if v.get("type").and_then(Value::as_str) == Some("error") {
-        return Err(anyhow!("solver: {}", v.get("error").and_then(Value::as_str).unwrap_or("unknown error")));
+        return Err(anyhow!(
+            "solver: {}",
+            v.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error")
+        ));
     }
-    let responses = v.get("responses").and_then(Value::as_array).ok_or_else(|| anyhow!("solver: no responses"))?;
+    let responses = v
+        .get("responses")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("solver: no responses"))?;
     let mut cache = solved_cache().lock();
     for (req, resp) in requests.iter().zip(responses) {
         let is_sig = req["type"] == "sig";
         if resp.get("type").and_then(Value::as_str) == Some("error") {
             if crate::perf::on() {
-                eprintln!("[jsc] {} challenge failed: {}", if is_sig { "sig" } else { "n" }, resp.get("error").and_then(Value::as_str).unwrap_or(""));
+                eprintln!(
+                    "[jsc] {} challenge failed: {}",
+                    if is_sig { "sig" } else { "n" },
+                    resp.get("error").and_then(Value::as_str).unwrap_or("")
+                );
             }
             continue;
         }
-        for (challenge, solved) in resp.get("data").and_then(Value::as_object).into_iter().flatten() {
-            let Some(solved) = solved.as_str() else { continue };
-            cache.insert((player.id.clone(), is_sig, challenge.clone()), solved.to_string());
-            if is_sig { &mut out.sig } else { &mut out.n }.insert(challenge.clone(), solved.to_string());
+        for (challenge, solved) in resp
+            .get("data")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let Some(solved) = solved.as_str() else {
+                continue;
+            };
+            cache.insert(
+                (player.id.clone(), is_sig, challenge.clone()),
+                solved.to_string(),
+            );
+            if is_sig { &mut out.sig } else { &mut out.n }
+                .insert(challenge.clone(), solved.to_string());
         }
     }
     if crate::perf::on() {
-        eprintln!("[jsc] {} solved {} n + {} sig challenges in {:?}", rt.describe(), todo_n.len(), todo_sig.len(), t.elapsed());
+        eprintln!(
+            "[jsc] {} solved {} n + {} sig challenges in {:?}",
+            rt.describe(),
+            todo_n.len(),
+            todo_sig.len(),
+            t.elapsed()
+        );
     }
     Ok(out)
 }
@@ -334,22 +409,39 @@ fn run(rt: &Runtime, program: String) -> Result<String> {
     let mut cmd = Command::new(&rt.path);
     match rt.kind {
         Kind::Deno => {
-            cmd.args(["run", "--ext=js", "--no-code-cache", "--no-prompt", "--no-remote", "--no-lock", "--node-modules-dir=none", "--no-config", "-"]);
+            cmd.args([
+                "run",
+                "--ext=js",
+                "--no-code-cache",
+                "--no-prompt",
+                "--no-remote",
+                "--no-lock",
+                "--node-modules-dir=none",
+                "--no-config",
+                "-",
+            ]);
         }
         Kind::Node => {
             // the permission flag left experimental status in Node 23.5
             if rt.version >= (23, 5, 0) {
                 cmd.arg("--permission");
             } else {
-                cmd.args(["--experimental-permission", "--no-warnings=ExperimentalWarning"]);
+                cmd.args([
+                    "--experimental-permission",
+                    "--no-warnings=ExperimentalWarning",
+                ]);
             }
             cmd.arg("-");
         }
         Kind::Embedded => unreachable!(),
     }
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     crate::api::streams::hide_window(&mut cmd);
-    let mut child = cmd.spawn().with_context(|| format!("starting {}", rt.describe()))?;
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("starting {}", rt.describe()))?;
     let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
     let writer = std::thread::spawn(move || {
         use std::io::Write;
@@ -366,7 +458,11 @@ fn run(rt: &Runtime, program: String) -> Result<String> {
         if started.elapsed() > RUN_TIMEOUT {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(anyhow!("{} did not finish in {:?}", rt.describe(), RUN_TIMEOUT));
+            return Err(anyhow!(
+                "{} did not finish in {:?}",
+                rt.describe(),
+                RUN_TIMEOUT
+            ));
         }
         std::thread::sleep(Duration::from_millis(20));
     };
@@ -374,7 +470,12 @@ fn run(rt: &Runtime, program: String) -> Result<String> {
     let stdout = out_reader.join().unwrap_or_default();
     if !status.success() {
         let err = err_reader.join().unwrap_or_default();
-        let line = err.lines().find(|l| l.contains("rror")).or_else(|| err.lines().next()).unwrap_or("").trim();
+        let line = err
+            .lines()
+            .find(|l| l.contains("rror"))
+            .or_else(|| err.lines().next())
+            .unwrap_or("")
+            .trim();
         return Err(anyhow!("{} failed: {line}", rt.describe()));
     }
     Ok(stdout)
@@ -393,34 +494,39 @@ fn read_all(pipe: Option<&mut impl std::io::Read>) -> String {
 /// one browser API the solver's output needs.
 fn run_embedded(program: String) -> Result<String> {
     use rquickjs::{Context, Function, Object, Runtime};
-    let worker = std::thread::Builder::new().name("quickjs".into()).stack_size(64 << 20).spawn(move || -> Result<String> {
-        let rt = Runtime::new().context("QuickJS runtime")?;
-        rt.set_max_stack_size(48 << 20);
-        let ctx = Context::full(&rt).context("QuickJS context")?;
-        ctx.with(|ctx| {
-            let logged = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
-            let console = Object::new(ctx.clone())?;
-            let sink = logged.clone();
-            console.set(
-                "log",
-                Function::new(ctx.clone(), move |line: String| {
-                    let mut s = sink.borrow_mut();
-                    s.push_str(&line);
-                    s.push('\n');
-                })?,
-            )?;
-            ctx.globals().set("console", console)?;
-            if let Err(e) = ctx.eval::<(), _>(program.as_bytes()) {
-                let detail = match ctx.catch().into_exception() {
-                    Some(exc) => exc.message().unwrap_or_default(),
-                    None => String::new(),
-                };
-                return Err(anyhow!("QuickJS failed: {e} {detail}"));
-            }
-            Ok(logged.take())
-        })
-    })?;
-    worker.join().map_err(|_| anyhow!("QuickJS thread panicked"))?
+    let worker = std::thread::Builder::new()
+        .name("quickjs".into())
+        .stack_size(64 << 20)
+        .spawn(move || -> Result<String> {
+            let rt = Runtime::new().context("QuickJS runtime")?;
+            rt.set_max_stack_size(48 << 20);
+            let ctx = Context::full(&rt).context("QuickJS context")?;
+            ctx.with(|ctx| {
+                let logged = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+                let console = Object::new(ctx.clone())?;
+                let sink = logged.clone();
+                console.set(
+                    "log",
+                    Function::new(ctx.clone(), move |line: String| {
+                        let mut s = sink.borrow_mut();
+                        s.push_str(&line);
+                        s.push('\n');
+                    })?,
+                )?;
+                ctx.globals().set("console", console)?;
+                if let Err(e) = ctx.eval::<(), _>(program.as_bytes()) {
+                    let detail = match ctx.catch().into_exception() {
+                        Some(exc) => exc.message().unwrap_or_default(),
+                        None => String::new(),
+                    };
+                    return Err(anyhow!("QuickJS failed: {e} {detail}"));
+                }
+                Ok(logged.take())
+            })
+        })?;
+    worker
+        .join()
+        .map_err(|_| anyhow!("QuickJS thread panicked"))?
 }
 
 #[cfg(test)]
@@ -431,16 +537,28 @@ mod tests {
     fn parses_player_id_and_sts() {
         let api = r"var scriptUrl = 'https:\/\/www.youtube.com\/s\/player\/b485e332\/www-widgetapi.vflset\/www-widgetapi.js';";
         assert_eq!(player_id(api).as_deref(), Some("b485e332"));
-        assert_eq!(player_id("https://www.youtube.com/s/player/0123abcd/base.js").as_deref(), Some("0123abcd"));
+        assert_eq!(
+            player_id("https://www.youtube.com/s/player/0123abcd/base.js").as_deref(),
+            Some("0123abcd")
+        );
         assert_eq!(player_id("nothing here"), None);
-        assert_eq!(signature_timestamp("a={signatureTimestamp:20779,b:1}"), Some(20779));
-        assert_eq!(signature_timestamp("signatureTimestamp=20780&x"), Some(20780));
+        assert_eq!(
+            signature_timestamp("a={signatureTimestamp:20779,b:1}"),
+            Some(20779)
+        );
+        assert_eq!(
+            signature_timestamp("signatureTimestamp=20780&x"),
+            Some(20780)
+        );
         assert_eq!(signature_timestamp("no sts"), None);
     }
 
     #[test]
     fn parses_runtime_versions() {
-        assert_eq!(parse_version("deno 2.9.8 (stable, release, aarch64-apple-darwin)\nv8 14.0\n"), Some((2, 9, 8)));
+        assert_eq!(
+            parse_version("deno 2.9.8 (stable, release, aarch64-apple-darwin)\nv8 14.0\n"),
+            Some((2, 9, 8))
+        );
         assert_eq!(parse_version("v24.20.0\n"), Some((24, 20, 0)));
         assert_eq!(parse_version("garbage"), None);
     }
@@ -457,7 +575,12 @@ mod tests {
     #[ignore = "needs network"]
     fn solves_live_challenges() {
         let p = player().unwrap();
-        println!("player {} sts {:?} runtime {}", p.id, p.sts, runtime().describe());
+        println!(
+            "player {} sts {:?} runtime {}",
+            p.id,
+            p.sts,
+            runtime().describe()
+        );
         let s = solve(&p, &["Ah-_xXRqTGCumKp9a".into()], &[]).unwrap();
         println!("{s:?}");
         assert_eq!(s.n.len(), 1);
@@ -470,7 +593,10 @@ mod tests {
         let p = player().unwrap();
         let scripts = scripts().unwrap();
         let data = json!({ "type": "player", "player": p.js, "requests": [{ "type": "n", "challenges": ["Ah-_xXRqTGCumKp9a"] }], "output_preprocessed": false });
-        let program = format!("{}\nObject.assign(globalThis, lib);\n{}\nconsole.log(JSON.stringify(jsc({})));\n", scripts.0, scripts.1, data);
+        let program = format!(
+            "{}\nObject.assign(globalThis, lib);\n{}\nconsole.log(JSON.stringify(jsc({})));\n",
+            scripts.0, scripts.1, data
+        );
         let t = Instant::now();
         let out = run_embedded(program).unwrap();
         println!("{out} in {:?}", t.elapsed());

@@ -1,13 +1,20 @@
 //! Application shell: routing, top bar, sidebar, overlays, keyboard shortcuts.
 use super::pages::*;
-use crate::i18n::{t, tf};
+use super::widgets::rtl_prose;
 use super::*;
 use crate::api::innertube;
-use crate::api::{auth, types::{PlaylistItem, VideoItem}};
-use crate::player::controller::{KeyboardFeedback, Player, new_tab_player, player, set_active_player, tab_players};
+use crate::api::{
+    auth,
+    types::{PlaylistItem, VideoItem},
+};
+use crate::i18n::{t, tf};
+use crate::player::controller::{
+    KeyboardFeedback, Player, new_tab_player, player, set_active_player, tab_players,
+};
 use crate::player::view::PlayerView;
 use crate::store;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::tooltip::Tooltip;
 
 // ───────────────────────── routes ─────────────────────────
 
@@ -24,7 +31,11 @@ pub enum Route {
     Playlist(String),
     Search(String),
     Channel(String),
-    Watch { id: String, playlist: Option<String>, start: Option<f64> },
+    Watch {
+        id: String,
+        playlist: Option<String>,
+        start: Option<f64>,
+    },
     Settings,
     Downloads,
 }
@@ -33,8 +44,11 @@ impl Route {
     fn title(&self) -> String {
         match self {
             Route::Home => t("Home").into(),
-            Route::Explore(i) => innertube::EXPLORE.get(*i).map(|e| t(e.0).to_string()).unwrap_or_default(),
-            Route::Shorts(_) => "Shorts".into(),
+            Route::Explore(i) => innertube::EXPLORE
+                .get(*i)
+                .map(|e| t(e.0).to_string())
+                .unwrap_or_default(),
+            Route::Shorts(_) => t("Shorts").into(),
             Route::Subscriptions => t("Subscriptions").into(),
             Route::Channels => t("Channels").into(),
             Route::History => t("History").into(),
@@ -128,12 +142,18 @@ pub fn route_from_link(arg: &str) -> Option<Route> {
     let arg = crate::links::normalize(arg);
     let search_arg = arg
         .contains("/results?")
-        .then(|| arg.split(['?', '&']).find_map(|kv| kv.strip_prefix("search_query=")))
+        .then(|| {
+            arg.split(['?', '&'])
+                .find_map(|kv| kv.strip_prefix("search_query="))
+        })
         .flatten()
         .map(|q| crate::api::http::urldecode(&q.replace('+', " ")))
         .filter(|q| !q.trim().is_empty());
     let param = |key: &str| {
-        arg.split(['?', '&', '#']).skip(1).find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('='))).map(str::to_string)
+        arg.split(['?', '&', '#'])
+            .skip(1)
+            .find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+            .map(str::to_string)
     };
     search_arg.map(Route::Search).or_else(|| {
         innertube::parse_youtube_url(&arg).map(|r| match r {
@@ -141,7 +161,10 @@ pub fn route_from_link(arg: &str) -> Option<Route> {
             innertube::ResolvedUrl::Video(id) => Route::Watch {
                 id,
                 playlist: param("list").filter(|l| !l.is_empty()),
-                start: param("t").or_else(|| param("start")).and_then(|t| parse_link_time(&t)).filter(|t| *t > 0.0),
+                start: param("t")
+                    .or_else(|| param("start"))
+                    .and_then(|t| parse_link_time(&t))
+                    .filter(|t| *t > 0.0),
             },
             innertube::ResolvedUrl::Channel(id) => Route::Channel(id),
             innertube::ResolvedUrl::Playlist(id) => Route::Playlist(id),
@@ -178,12 +201,30 @@ mod link_tests {
 
     #[test]
     fn links_keep_time_and_playlist() {
-        let r = route_from_link("streamtube://open?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ%26t%3D1m30s%26list%3DPL123");
-        assert!(matches!(r, Some(Route::Watch { ref id, playlist: Some(ref l), start: Some(s) }) if id == "dQw4w9WgXcQ" && l == "PL123" && s == 90.0), "{r:?}");
+        let r = route_from_link(
+            "streamtube://open?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ%26t%3D1m30s%26list%3DPL123",
+        );
+        assert!(
+            matches!(r, Some(Route::Watch { ref id, playlist: Some(ref l), start: Some(s) }) if id == "dQw4w9WgXcQ" && l == "PL123" && s == 90.0),
+            "{r:?}"
+        );
         let r = route_from_link("https://youtu.be/dQw4w9WgXcQ?t=42");
-        assert!(matches!(r, Some(Route::Watch { start: Some(s), playlist: None, .. }) if s == 42.0), "{r:?}");
+        assert!(
+            matches!(r, Some(Route::Watch { start: Some(s), playlist: None, .. }) if s == 42.0),
+            "{r:?}"
+        );
         let r = route_from_link("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-        assert!(matches!(r, Some(Route::Watch { start: None, playlist: None, .. })), "{r:?}");
+        assert!(
+            matches!(
+                r,
+                Some(Route::Watch {
+                    start: None,
+                    playlist: None,
+                    ..
+                })
+            ),
+            "{r:?}"
+        );
         assert_eq!(parse_link_time("1h2m3s"), Some(3723.0));
         assert_eq!(parse_link_time("abc"), None);
     }
@@ -287,7 +328,9 @@ pub fn sync_watch_route(id: String, cx: &mut App) {
 }
 
 pub fn is_current_page(page: EntityId, cx: &App) -> bool {
-    cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()).is_some_and(|app| app.read(cx).page.entity_id() == page)
+    cx.try_global::<AppHandle>()
+        .and_then(|h| h.0.upgrade())
+        .is_some_and(|app| app.read(cx).page.entity_id() == page)
 }
 
 pub fn has_autoplay_next(cx: &App) -> bool {
@@ -305,7 +348,15 @@ pub fn play_next(window: &mut Window, cx: &mut App) {
         return;
     }
     if let Some(v) = p.read(cx).autoplay_next.clone() {
-        navigate(Route::Watch { id: v.id, playlist: None, start: None }, window, cx);
+        navigate(
+            Route::Watch {
+                id: v.id,
+                playlist: None,
+                start: None,
+            },
+            window,
+            cx,
+        );
     }
 }
 
@@ -319,8 +370,16 @@ pub struct MenuItem {
 }
 
 impl MenuItem {
-    pub fn new(icon: &'static str, label: impl Into<SharedString>, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        Self { icon, label: label.into(), action: Arc::new(f) }
+    pub fn new(
+        icon: &'static str,
+        label: impl Into<SharedString>,
+        f: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            icon,
+            label: label.into(),
+            action: Arc::new(f),
+        }
     }
 }
 
@@ -344,8 +403,17 @@ pub enum Dialog {
     /// signing in to youtube.com in a browser, so watches reach the account
     WebSignIn,
     SaveToPlaylist(VideoItem),
-    TextPrompt { title: String, placeholder: String, on_submit: Arc<dyn Fn(String, &mut Window, &mut App)> },
-    Confirm { title: String, body: String, confirm: String, on_confirm: Arc<dyn Fn(&mut Window, &mut App)> },
+    TextPrompt {
+        title: String,
+        placeholder: String,
+        on_submit: Arc<dyn Fn(String, &mut Window, &mut App)>,
+    },
+    Confirm {
+        title: String,
+        body: String,
+        confirm: String,
+        on_confirm: Arc<dyn Fn(&mut Window, &mut App)>,
+    },
     /// a newer version is on GitHub
     Update,
 }
@@ -377,10 +445,19 @@ pub fn open_web_sign_in(cx: &mut App) {
 
 /// Connects the browser session from a cookies.txt file the user picks.
 pub fn import_web_cookies(cx: &mut App) {
-    let rx = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Use cookies".into()) });
+    let rx = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Use cookies".into()),
+    });
     cx.spawn(async move |cx| {
-        let Ok(Ok(Some(paths))) = rx.await else { return };
-        let Some(path) = paths.into_iter().next() else { return };
+        let Ok(Ok(Some(paths))) = rx.await else {
+            return;
+        };
+        let Some(path) = paths.into_iter().next() else {
+            return;
+        };
         let res = blocking(move || crate::api::web::import_cookies_txt(&path)).await;
         let _ = cx.update(|cx| {
             if let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()) {
@@ -396,7 +473,13 @@ pub fn import_web_cookies(cx: &mut App) {
             }
             match res {
                 Ok(name) => {
-                    toast(cx, tf!("Connected as {0}. What you watch now shows in your YouTube history.", name));
+                    toast(
+                        cx,
+                        tf!(
+                            "Connected as {0}. What you watch now shows in your YouTube history.",
+                            name
+                        ),
+                    );
                     super::history::refresh_current(cx, false);
                 }
                 Err(e) => toast(cx, crate::ui::friendly_error(&format!("{e:#}"))),
@@ -437,9 +520,16 @@ pub fn open_save_dialog(v: VideoItem, window: &mut Window, cx: &mut App) {
 }
 
 fn account_favorites(playlists: &[PlaylistItem]) -> Option<&PlaylistItem> {
-    playlists.iter().find(|p| p.id.starts_with("FL")).or_else(|| {
-        playlists.iter().find(|p| !p.id.is_empty() && !matches!(p.id.as_str(), "LL" | "WL") && p.title.trim().eq_ignore_ascii_case("Favorites"))
-    })
+    playlists
+        .iter()
+        .find(|p| p.id.starts_with("FL"))
+        .or_else(|| {
+            playlists.iter().find(|p| {
+                !p.id.is_empty()
+                    && !matches!(p.id.as_str(), "LL" | "WL")
+                    && p.title.trim().eq_ignore_ascii_case("Favorites")
+            })
+        })
 }
 
 struct FavoriteMembership {
@@ -456,8 +546,16 @@ mod favorite_playlist_tests {
 
     #[::core::prelude::v1::test]
     fn account_favorites_prefers_legacy_ids_and_excludes_built_in_lists() {
-        let playlist = |id: &str, title: &str| PlaylistItem { id: id.into(), title: title.into(), ..Default::default() };
-        let candidates = [playlist("LL", "Favorites"), playlist("PLcustom", "Favorites"), playlist("FLlegacy", "Избранное")];
+        let playlist = |id: &str, title: &str| PlaylistItem {
+            id: id.into(),
+            title: title.into(),
+            ..Default::default()
+        };
+        let candidates = [
+            playlist("LL", "Favorites"),
+            playlist("PLcustom", "Favorites"),
+            playlist("FLlegacy", "Избранное"),
+        ];
         assert_eq!(account_favorites(&candidates).unwrap().id, "FLlegacy");
         assert_eq!(account_favorites(&candidates[..2]).unwrap().id, "PLcustom");
         assert!(account_favorites(&candidates[..1]).is_none());
@@ -467,9 +565,12 @@ mod favorite_playlist_tests {
 pub fn open_dialog(d: Dialog, window: &mut Window, cx: &mut App) {
     if let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()) {
         app.update(cx, |a, cx| {
-            a.dialog_input.update(cx, |i, cx| i.set_value("", window, cx));
+            a.dialog_input
+                .update(cx, |i, cx| i.set_value("", window, cx));
             if let Dialog::TextPrompt { placeholder, .. } = &d {
-                a.dialog_input.update(cx, |input, cx| input.set_placeholder(t(placeholder).to_string(), window, cx));
+                a.dialog_input.update(cx, |input, cx| {
+                    input.set_placeholder(t(placeholder).to_string(), window, cx)
+                });
                 let fh = a.dialog_input.read(cx).focus_handle(cx);
                 window.focus(&fh, cx);
             }
@@ -479,17 +580,39 @@ pub fn open_dialog(d: Dialog, window: &mut Window, cx: &mut App) {
     }
 }
 
-pub fn prompt_text(title: &str, placeholder: &str, window: &mut Window, cx: &mut App, f: impl Fn(String, &mut Window, &mut App) + 'static) {
+pub fn prompt_text(
+    title: &str,
+    placeholder: &str,
+    window: &mut Window,
+    cx: &mut App,
+    f: impl Fn(String, &mut Window, &mut App) + 'static,
+) {
     open_dialog(
-        Dialog::TextPrompt { title: title.into(), placeholder: placeholder.into(), on_submit: Arc::new(f) },
+        Dialog::TextPrompt {
+            title: title.into(),
+            placeholder: placeholder.into(),
+            on_submit: Arc::new(f),
+        },
         window,
         cx,
     );
 }
 
-pub fn confirm(title: &str, body: &str, confirm: &str, window: &mut Window, cx: &mut App, f: impl Fn(&mut Window, &mut App) + 'static) {
+pub fn confirm(
+    title: &str,
+    body: &str,
+    confirm: &str,
+    window: &mut Window,
+    cx: &mut App,
+    f: impl Fn(&mut Window, &mut App) + 'static,
+) {
     open_dialog(
-        Dialog::Confirm { title: title.into(), body: body.into(), confirm: confirm.into(), on_confirm: Arc::new(f) },
+        Dialog::Confirm {
+            title: title.into(),
+            body: body.into(),
+            confirm: confirm.into(),
+            on_confirm: Arc::new(f),
+        },
         window,
         cx,
     );
@@ -510,7 +633,12 @@ struct Tab {
     forward: Vec<(Route, AnyView)>,
     /// the queue and position of the video this tab was playing when it was
     /// left, so coming back resumes it with its queue (one player is shared)
-    playback: Option<(String, Vec<crate::api::types::VideoItem>, Option<usize>, f64)>,
+    playback: Option<(
+        String,
+        Vec<crate::api::types::VideoItem>,
+        Option<usize>,
+        f64,
+    )>,
     pinned: bool,
     player: Option<Entity<Player>>,
     last_active: std::time::Instant,
@@ -519,7 +647,9 @@ struct Tab {
 impl Tab {
     fn new(id: u64, route: Route, pinned: bool) -> Self {
         Self {
-            id, route, pinned,
+            id,
+            route,
+            pinned,
             page: None,
             history: Vec::new(),
             forward: Vec::new(),
@@ -541,11 +671,19 @@ mod tab_playback_smoke {
     use std::rc::Rc;
     use std::time::Duration;
 
-    async fn wait_for_playback(playback: &Entity<Player>, at: f64, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    async fn wait_for_playback(
+        playback: &Entity<Player>,
+        at: f64,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
         for _ in 0..100 {
             let position = cx.update(|cx| playback.read(cx).time);
-            if position > at { return Ok(()); }
-            cx.background_executor().timer(Duration::from_millis(150)).await;
+            if position > at {
+                return Ok(());
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
         }
         anyhow::bail!("The test video did not reach {at}s");
     }
@@ -553,7 +691,10 @@ mod tab_playback_smoke {
     #[::core::prelude::v1::test]
     #[ignore = "starts native windows and plays public YouTube videos"]
     fn tabs_keep_playing_and_pip_stays_with_its_tab() {
-        assert!(std::env::var_os("STREAMTUBE_DATA_DIR").is_some(), "use a dedicated test profile");
+        assert!(
+            std::env::var_os("STREAMTUBE_DATA_DIR").is_some(),
+            "use a dedicated test profile"
+        );
         crate::store::init();
         crate::store::update_settings(|s| {
             s.independent_tab_playback = true;
@@ -565,48 +706,107 @@ mod tab_playback_smoke {
         });
         let result = Rc::new(RefCell::new(Err(anyhow::anyhow!("test did not finish"))));
         let finished = result.clone();
-        gpui_kit::application().with_assets(crate::assets::Assets).run(move |cx| {
-            gpui_kit::init(cx);
-            crate::ui::apply_theme(None, cx);
-            crate::player::preview::init(cx);
-            crate::player::controller::init(cx);
-            let (window, app) = gpui_kit::open_window(WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::new(point(px(-10000.), px(-10000.)), size(px(720.), px(480.))))),
-                show: true, focus: false, ..Default::default()
-            }, cx, |window, cx| cx.new(|cx| AppView::new(window, cx))).unwrap();
-            let watch = |id: &str| Route::Watch { id: id.to_owned(), playlist: None, start: Some(0.) };
-            window.update(cx, |_, w, cx| app.update(cx, |app, cx| app.go(watch("dQw4w9WgXcQ"), w, cx))).unwrap();
-            let first = player(cx);
-            cx.spawn(async move |cx| {
-                let result = async {
-                    wait_for_playback(&first, 0.5, cx).await?;
-                    let (first_time, second) = cx.update(|cx| {
-                        let first_time = first.read(cx).time;
-                        window.update(cx, |_, w, cx| app.update(cx, |app, cx| app.new_tab(watch("9bZkp7q19f0"), true, w, cx))).unwrap();
-                        (first_time, player(cx))
+        gpui_kit::application()
+            .with_assets(crate::assets::Assets)
+            .run(move |cx| {
+                gpui_kit::init(cx);
+                crate::ui::apply_theme(None, cx);
+                crate::player::preview::init(cx);
+                crate::player::controller::init(cx);
+                let (window, app) = gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            point(px(-10000.), px(-10000.)),
+                            size(px(720.), px(480.)),
+                        ))),
+                        show: true,
+                        focus: false,
+                        ..Default::default()
+                    },
+                    cx,
+                    |window, cx| cx.new(|cx| AppView::new(window, cx)),
+                )
+                .unwrap();
+                let watch = |id: &str| Route::Watch {
+                    id: id.to_owned(),
+                    playlist: None,
+                    start: Some(0.),
+                };
+                window
+                    .update(cx, |_, w, cx| {
+                        app.update(cx, |app, cx| app.go(watch("dQw4w9WgXcQ"), w, cx))
+                    })
+                    .unwrap();
+                let first = player(cx);
+                cx.spawn(async move |cx| {
+                    let result = async {
+                        wait_for_playback(&first, 0.5, cx).await?;
+                        let (first_time, second) = cx.update(|cx| {
+                            let first_time = first.read(cx).time;
+                            window
+                                .update(cx, |_, w, cx| {
+                                    app.update(cx, |app, cx| {
+                                        app.new_tab(watch("9bZkp7q19f0"), true, w, cx)
+                                    })
+                                })
+                                .unwrap();
+                            (first_time, player(cx))
+                        });
+                        wait_for_playback(&second, 0.5, cx).await?;
+                        wait_for_playback(&first, first_time + 0.5, cx).await?;
+                        cx.update(|cx| {
+                            anyhow::Result::<()>::Ok({
+                                anyhow::ensure!(first != second, "tabs reused one player");
+                                anyhow::ensure!(
+                                    first
+                                        .read(cx)
+                                        .mpv()
+                                        .and_then(|p| p.get_string("vid"))
+                                        .as_deref()
+                                        == Some("no"),
+                                    "background player still decodes video"
+                                );
+                                window.update(cx, |_, w, cx| {
+                                    app.update(cx, |app, cx| app.switch_tab(0, w, cx))
+                                })?;
+                                crate::ui::pip::open(cx);
+                                window.update(cx, |_, w, cx| {
+                                    app.update(cx, |app, cx| app.switch_tab(1, w, cx))
+                                })?;
+                                anyhow::ensure!(
+                                    crate::ui::pip::owner(cx).as_ref() == Some(&first),
+                                    "PiP switched to the active tab"
+                                );
+                                window.update(cx, |_, w, cx| {
+                                    app.update(cx, |app, cx| {
+                                        app.new_tab(watch("dQw4w9WgXcQ"), true, w, cx);
+                                        app.new_tab(watch("9bZkp7q19f0"), true, w, cx);
+                                    })
+                                })?;
+                                let engines = tab_players(cx)
+                                    .iter()
+                                    .filter(|p| p.read(cx).has_engine())
+                                    .count();
+                                anyhow::ensure!(
+                                    engines == 3,
+                                    "expected three live players, got {engines}"
+                                );
+                                anyhow::ensure!(
+                                    !second.read(cx).has_engine(),
+                                    "old background player was not released"
+                                );
+                            })
+                        })?;
+                        Ok(())
+                    }
+                    .await;
+                    let _ = cx.update(|cx| {
+                        *finished.borrow_mut() = result;
+                        cx.quit();
                     });
-                    wait_for_playback(&second, 0.5, cx).await?;
-                    wait_for_playback(&first, first_time + 0.5, cx).await?;
-                    cx.update(|cx| anyhow::Result::<()>::Ok({
-                        anyhow::ensure!(first != second, "tabs reused one player");
-                        anyhow::ensure!(first.read(cx).mpv().and_then(|p| p.get_string("vid")).as_deref() == Some("no"), "background player still decodes video");
-                        window.update(cx, |_, w, cx| app.update(cx, |app, cx| app.switch_tab(0, w, cx)))?;
-                        crate::ui::pip::open(cx);
-                        window.update(cx, |_, w, cx| app.update(cx, |app, cx| app.switch_tab(1, w, cx)))?;
-                        anyhow::ensure!(crate::ui::pip::owner(cx).as_ref() == Some(&first), "PiP switched to the active tab");
-                        window.update(cx, |_, w, cx| app.update(cx, |app, cx| {
-                            app.new_tab(watch("dQw4w9WgXcQ"), true, w, cx);
-                            app.new_tab(watch("9bZkp7q19f0"), true, w, cx);
-                        }))?;
-                        let engines = tab_players(cx).iter().filter(|p| p.read(cx).has_engine()).count();
-                        anyhow::ensure!(engines == 3, "expected three live players, got {engines}");
-                        anyhow::ensure!(!second.read(cx).has_engine(), "old background player was not released");
-                    }))?;
-                    Ok(())
-                }.await;
-                let _ = cx.update(|cx| { *finished.borrow_mut() = result; cx.quit(); });
-            }).detach();
-        });
+                })
+                .detach();
+            });
         result.borrow_mut().as_mut().unwrap();
     }
 }
@@ -639,12 +839,20 @@ impl Render for Shell {
         let a = self.app.read(cx);
         let has_slot = matches!(a.route, Route::Watch { .. } | Route::Shorts(_));
         let clip = cx.global::<crate::ui::slot::PageClip>().0.clone();
-        let main = has_slot.then(|| crate::ui::pip::main_surface(&a.main_view, cx).clip(clip.clone()));
+        let main =
+            has_slot.then(|| crate::ui::pip::main_surface(&a.main_view, cx).clip(clip.clone()));
         // only over a thumbnail drawn on this page (the slot is cleared when a
         // preview stops or moves to another video)
-        let preview = (crate::player::preview::showing(cx).is_some() && cx.global::<crate::player::preview::PreviewSlot>().0.get().is_some()).then(|| {
+        let preview = (crate::player::preview::showing(cx).is_some()
+            && cx
+                .global::<crate::player::preview::PreviewSlot>()
+                .0
+                .get()
+                .is_some())
+        .then(|| {
             let slot = cx.global::<crate::player::preview::PreviewSlot>().0.clone();
-            crate::ui::slot::SlotFollower::with_slot(slot, AnyView::from(a.preview_view.clone())).clip(clip.clone())
+            crate::ui::slot::SlotFollower::with_slot(slot, AnyView::from(a.preview_view.clone()))
+                .clip(clip.clone())
         });
         // the same conditions as `AppView::render_mini_player` (fullscreen is a watch page)
         let mini = (!has_slot && player(cx).read(cx).video.is_some()).then(|| {
@@ -733,55 +941,69 @@ impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         crate::idle_inhibit::set_main_window(cx, window);
         cx.set_global(AppHandle(cx.entity().downgrade()));
-        cx.set_global(UiState { sidebar_open: true, ..Default::default() });
+        cx.set_global(UiState {
+            sidebar_open: true,
+            ..Default::default()
+        });
         cx.set_global(OpenMenu::default());
         crate::downloads::load_history(cx);
         cx.set_global(crate::ui::cards::Watched(store::progress_map()));
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t("Search or paste a YouTube link")));
+        let search = cx
+            .new(|cx| InputState::new(window, cx).placeholder(t("Search or paste a YouTube link")));
         let dialog_input = cx.new(|cx| InputState::new(window, cx));
         let mut subs = Vec::new();
-        subs.push(cx.subscribe_in(&search, window, |this: &mut Self, state, ev: &InputEvent, window, cx| match ev {
-            InputEvent::PressEnter { .. } => {
-                let q = if let Some(i) = this.sel_suggestion {
-                    this.all_suggestions().get(i).cloned().unwrap_or_default()
-                } else {
-                    state.read(cx).value().to_string()
-                };
-                this.submit_search(q, window, cx);
-            }
-            InputEvent::Change => {
-                this.sel_suggestion = None;
-                let q = state.read(cx).value().to_string();
-                this.update_suggestions(q, cx);
-            }
-            InputEvent::Focus => {
-                this.show_suggestions = true;
-                let q = state.read(cx).value().to_string();
-                this.update_suggestions(q, cx);
-            }
-            InputEvent::Blur => {
-                // delay so clicks on suggestions register
-                cx.spawn(async move |this, cx| {
-                    cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
-                    let _ = this.update(cx, |a, cx| {
-                        a.show_suggestions = false;
-                        cx.notify();
-                    });
-                })
-                .detach();
-            }
-        }));
-        subs.push(cx.subscribe_in(&dialog_input, window, |this: &mut Self, state, ev: &InputEvent, window, cx| {
-            if let InputEvent::PressEnter { .. } = ev {
-                let v = state.read(cx).value().to_string();
-                if let Some(Dialog::TextPrompt { on_submit, .. }) = this.dialog.take() {
-                    if !v.trim().is_empty() {
-                        on_submit(v.trim().to_string(), window, cx);
-                    }
+        subs.push(cx.subscribe_in(
+            &search,
+            window,
+            |this: &mut Self, state, ev: &InputEvent, window, cx| match ev {
+                InputEvent::PressEnter { .. } => {
+                    let q = if let Some(i) = this.sel_suggestion {
+                        this.all_suggestions().get(i).cloned().unwrap_or_default()
+                    } else {
+                        state.read(cx).value().to_string()
+                    };
+                    this.submit_search(q, window, cx);
                 }
-                cx.notify();
-            }
-        }));
+                InputEvent::Change => {
+                    this.sel_suggestion = None;
+                    let q = state.read(cx).value().to_string();
+                    this.update_suggestions(q, cx);
+                }
+                InputEvent::Focus => {
+                    this.show_suggestions = true;
+                    let q = state.read(cx).value().to_string();
+                    this.update_suggestions(q, cx);
+                }
+                InputEvent::Blur => {
+                    // delay so clicks on suggestions register
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(200))
+                            .await;
+                        let _ = this.update(cx, |a, cx| {
+                            a.show_suggestions = false;
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                }
+            },
+        ));
+        subs.push(cx.subscribe_in(
+            &dialog_input,
+            window,
+            |this: &mut Self, state, ev: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    let v = state.read(cx).value().to_string();
+                    if let Some(Dialog::TextPrompt { on_submit, .. }) = this.dialog.take() {
+                        if !v.trim().is_empty() {
+                            on_submit(v.trim().to_string(), window, cx);
+                        }
+                    }
+                    cx.notify();
+                }
+            },
+        ));
         let p = player(cx);
         // Only re-render the shell when the mini player's video changes; the player
         // views are drawn outside it (see `Shell`) and re-render themselves per frame.
@@ -795,28 +1017,33 @@ impl AppView {
         subs.push(cx.observe_global::<crate::downloads::Downloads>(|_, cx| cx.notify()));
         subs.push(cx.observe_global::<crate::updater::Updates>(|_, cx| cx.notify()));
         subs.push(cx.observe_global::<crate::ui::pip::PipWindow>(|_, cx| cx.notify()));
-        subs.push(cx.observe_window_bounds(window, |this: &mut Self, window, _| {
-            // persist placement at most twice a second while the user drags/resizes
-            if this.last_bounds_save.elapsed() > std::time::Duration::from_millis(500) {
-                this.last_bounds_save = std::time::Instant::now();
-                crate::save_window_bounds(window);
-            }
-        }));
+        subs.push(
+            cx.observe_window_bounds(window, |this: &mut Self, window, _| {
+                // persist placement at most twice a second while the user drags/resizes
+                if this.last_bounds_save.elapsed() > std::time::Duration::from_millis(500) {
+                    this.last_bounds_save = std::time::Instant::now();
+                    crate::save_window_bounds(window);
+                }
+            }),
+        );
         // "Background play" off: pause when the window is minimized, resume when restored
         // a hold-for-2x can't outlive the window losing focus (the key/button release goes elsewhere)
-        subs.push(cx.observe_window_activation(window, |this: &mut Self, window, cx| {
-            if window.is_window_active() {
-                super::history::refresh_current(cx, false);
-            } else {
-                this.space_down = false;
-                player(cx).update(cx, |p, cx| {
-                    p.end_boost();
-                    cx.notify();
-                });
-            }
-        }));
+        subs.push(
+            cx.observe_window_activation(window, |this: &mut Self, window, cx| {
+                if window.is_window_active() {
+                    super::history::refresh_current(cx, false);
+                } else {
+                    this.space_down = false;
+                    player(cx).update(cx, |p, cx| {
+                        p.end_boost();
+                        cx.notify();
+                    });
+                }
+            }),
+        );
         subs.push(window.observe_window_visibility({
-            let paused_by_us = std::rc::Rc::new(std::cell::RefCell::new(Vec::<WeakEntity<Player>>::new()));
+            let paused_by_us =
+                std::rc::Rc::new(std::cell::RefCell::new(Vec::<WeakEntity<Player>>::new()));
             move |vis, window, cx| {
                 if !vis.is_visible() {
                     if store::settings_snapshot().background_play || !window_minimized(window) {
@@ -825,7 +1052,12 @@ impl AppView {
                     let pip = crate::ui::pip::owner(cx);
                     for player in tab_players(cx) {
                         let playback = player.read(cx);
-                        if pip.as_ref() == Some(&player) || playback.paused || playback.video.is_none() { continue; }
+                        if pip.as_ref() == Some(&player)
+                            || playback.paused
+                            || playback.video.is_none()
+                        {
+                            continue;
+                        }
                         player.update(cx, |p, cx| p.set_paused(true, cx));
                         paused_by_us.borrow_mut().push(player.downgrade());
                     }
@@ -833,7 +1065,9 @@ impl AppView {
                     let paused = std::mem::take(&mut *paused_by_us.borrow_mut());
                     for player in paused.into_iter().filter_map(|player| player.upgrade()) {
                         player.update(cx, |p, cx| {
-                            if p.video.is_some() { p.set_paused(false, cx); }
+                            if p.video.is_some() {
+                                p.set_paused(false, cx);
+                            }
                         });
                     }
                 }
@@ -856,32 +1090,44 @@ impl AppView {
         let preview_view = cx.new(crate::player::preview::PreviewView::new);
         let images = crate::ui::image_cache::init(cx);
         // re-render (to add or drop the preview layer) only when a preview starts or ends
-        subs.push(cx.subscribe(&crate::player::preview::preview(cx), |this, _, event, cx| {
-            if matches!(event, crate::player::preview::PreviewEvent::TargetChanged) {
-                // Repaint the cached page once so the hovered thumbnail records its bounds.
-                App::notify(cx, this.page.entity_id());
-            }
-            cx.notify();
-        }));
+        subs.push(cx.subscribe(
+            &crate::player::preview::preview(cx),
+            |this, _, event, cx| {
+                if matches!(event, crate::player::preview::PreviewEvent::TargetChanged) {
+                    // Repaint the cached page once so the hovered thumbnail records its bounds.
+                    App::notify(cx, this.page.entity_id());
+                }
+                cx.notify();
+            },
+        ));
         cx.set_global(crate::ui::slot::PlayerSlot::default());
         cx.set_global(crate::ui::slot::MiniSlot::default());
         cx.set_global(crate::ui::slot::PageClip::default());
         // a YouTube link passed on the command line opens directly
         let arg_route = route_from_link(&std::env::args().nth(1).unwrap_or_default());
-        let start = arg_route.unwrap_or_else(|| match store::settings_snapshot().start_page.as_str() {
-            "subscriptions" => Route::Subscriptions,
-            "history" => Route::History,
-            _ => Route::Home,
-        });
+        let start =
+            arg_route.unwrap_or_else(|| match store::settings_snapshot().start_page.as_str() {
+                "subscriptions" => Route::Subscriptions,
+                "history" => Route::History,
+                _ => Route::Home,
+            });
         crate::perf::mark("app shell");
         let page = build_page(&start, window, cx);
         super::history::refresh_current(cx, false);
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(super::history::REFRESH_INTERVAL).await;
-            if this.update(cx, |_, cx| super::history::refresh_current(cx, false)).is_err() {
-                break;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(super::history::REFRESH_INTERVAL)
+                    .await;
+                if this
+                    .update(cx, |_, cx| super::history::refresh_current(cx, false))
+                    .is_err()
+                {
+                    break;
+                }
             }
-        }).detach();
+        })
+        .detach();
         crate::perf::mark("start page");
         crate::updater::check_on_startup(cx);
         if let Route::Search(q) = &start {
@@ -895,8 +1141,11 @@ impl AppView {
         if crate::api::auth::signed_in() {
             cx.spawn(async move |_, _| {
                 let _ = blocking(crate::api::auth::sync_search_history).await;
-            }).detach();
-            let last = store::kv_get("subs_synced_at").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            })
+            .detach();
+            let last = store::kv_get("subs_synced_at")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
             if store::subscriptions().is_empty() || crate::api::json::now() - last > 24 * 3600 {
                 cx.spawn(async move |this, cx| {
                     let res = blocking(crate::api::auth::sync_subscriptions).await;
@@ -920,7 +1169,9 @@ impl AppView {
         }
         let active_tab = tabs.len();
         let mut first = Tab::new(next_tab_id, start.clone(), false);
-        if independent_tab_playback { first.player = Some(p.clone()); }
+        if independent_tab_playback {
+            first.player = Some(p.clone());
+        }
         tabs.push(first);
         next_tab_id += 1;
         Self {
@@ -980,7 +1231,13 @@ impl AppView {
             if let Err(error) = blocking(move || open::that_detached(url.as_str())).await {
                 let _ = this.update(cx, |this, cx| {
                     if this.sign_in_pending(attempt) {
-                        toast(cx, tf!("Could not open link: {0}", crate::ui::friendly_error(&error.to_string())));
+                        toast(
+                            cx,
+                            tf!(
+                                "Could not open link: {0}",
+                                crate::ui::friendly_error(&error.to_string())
+                            ),
+                        );
                     }
                 });
             }
@@ -1028,7 +1285,9 @@ impl AppView {
             }
             let mut errors = 0;
             loop {
-                cx.background_executor().timer(Duration::from_secs(interval)).await;
+                cx.background_executor()
+                    .timer(Duration::from_secs(interval))
+                    .await;
                 let waiting = this
                     .update(cx, |t, _| t.sign_in_pending(attempt))
                     .unwrap_or(false);
@@ -1079,7 +1338,9 @@ impl AppView {
                         let msg = e.to_string();
                         // network hiccups don't end the sign-in; a refusal from Google does
                         errors += 1;
-                        let refused = msg.contains("expired") || msg.contains("cancelled") || msg.contains("failed");
+                        let refused = msg.contains("expired")
+                            || msg.contains("cancelled")
+                            || msg.contains("failed");
                         if !refused && errors < 4 {
                             continue;
                         }
@@ -1114,14 +1375,23 @@ impl AppView {
         cx.spawn(async move |this, cx| {
             let mut showed_channel = false;
             loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(700)).await;
-                if watch.load(Ordering::Relaxed) { return; }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(700))
+                    .await;
+                if watch.load(Ordering::Relaxed) {
+                    return;
+                }
                 let changed = !showed_channel && channel_ready.load(Ordering::Relaxed);
-                let open = this.update(cx, |t, cx| {
-                    let open = t.web_login.attempt == attempt && matches!(t.dialog, Some(Dialog::WebSignIn));
-                    if open && changed { cx.notify(); }
-                    open
-                }).unwrap_or(false);
+                let open = this
+                    .update(cx, |t, cx| {
+                        let open = t.web_login.attempt == attempt
+                            && matches!(t.dialog, Some(Dialog::WebSignIn));
+                        if open && changed {
+                            cx.notify();
+                        }
+                        open
+                    })
+                    .unwrap_or(false);
                 if !open {
                     watch.store(true, Ordering::Relaxed);
                     return;
@@ -1162,14 +1432,24 @@ impl AppView {
     fn render_web_sign_in(&self, cx: &mut Context<Self>) -> AnyElement {
         use std::sync::atomic::Ordering;
         let p = pal(cx);
-        let browser = self.web_login.browser.clone().unwrap_or_else(|| "browser".into());
+        let browser = self
+            .web_login
+            .browser
+            .clone()
+            .unwrap_or_else(|| t("browser").into());
         let mut col = div().flex().flex_col().gap_4().child(
             div()
-                .flex()
+                .flex_row_dir(cx)
                 .items_center()
                 .gap_3()
                 .child(icon("history").size_6().text_color(p.text))
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(t("Connect your YouTube history"))),
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.text)
+                        .child(t("Connect your YouTube history")),
+                ),
         );
         let cookies_link = div()
             .id("wsi-cookies")
@@ -1179,35 +1459,43 @@ impl AppView {
             .hover(|s| s.underline())
             .child(t("Use a cookies.txt file instead"))
             .on_click(|_, _, cx| import_web_cookies(cx));
-        let cancel = pill("wsi-cancel", None, "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
-            if let Some(c) = this.web_login.cancel.take() {
-                c.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            this.dialog = None;
-            cx.notify();
-        }));
+        let cancel =
+            pill("wsi-cancel", None, "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
+                if let Some(c) = this.web_login.cancel.take() {
+                    c.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                this.dialog = None;
+                cx.notify();
+            }));
         if let Some(err) = &self.web_login.error {
-            col = col.child(div().text_sm().text_color(p.text2).child(err.clone())).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(cookies_link)
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(cancel)
-                            .child(pill("wsi-retry", Some("refresh-cw"), "Try again", cx).on_click(cx.listener(|this, _, _, cx| this.start_web_sign_in(cx)))),
-                    ),
-            );
+            col = col
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(p.text2)
+                        .child(rtl_prose(err.clone(), cx)),
+                )
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .items_center()
+                        .justify_between()
+                        .child(cookies_link)
+                        .child(
+                            div().flex_row_dir(cx).gap_2().child(cancel).child(
+                                pill("wsi-retry", Some("refresh-cw"), "Try again", cx).on_click(
+                                    cx.listener(|this, _, _, cx| this.start_web_sign_in(cx)),
+                                ),
+                            ),
+                        ),
+                );
         } else if self.web_login.channel_ready.load(Ordering::Relaxed) {
             let confirmed = self.web_login.channel_confirmed.load(Ordering::Relaxed);
             col = col
                 .child(div().text_sm().text_color(p.text2).child(t(
                     "In the browser, open your YouTube profile menu and choose the channel for your watch history.",
                 )))
-                .child(div().flex().flex_wrap().justify_end().gap_2().child(cancel).child(
+                .child(div().flex_row_dir(cx).flex_wrap().justify_flex_end().gap_2().child(cancel).child(
                     pill("wsi-use-channel", None, if confirmed { "Waiting for sign-in…" } else { "Use current YouTube channel" }, cx)
                         .when(!confirmed, |button| button.on_click(cx.listener(|this, _, _, cx| {
                             this.web_login.channel_confirmed.store(true, Ordering::Relaxed);
@@ -1223,17 +1511,17 @@ impl AppView {
                         .gap_2()
                         .text_sm()
                         .text_color(p.text2)
-                        .child(tf!("Sign in to YouTube in the {0} window that opened.", browser))
+                        .child(rtl_prose(tf!("Sign in to YouTube in the {0} window that opened.", browser), cx))
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(p.text3)
-                                .child(t("Videos you watch in Stream Tube then show in your YouTube history, and your phone and TV resume them where you stopped. The window uses its own empty profile, which is deleted afterwards.")),
+                                .child(rtl_prose(t("Videos you watch in Stream Tube then show in your YouTube history, and your phone and TV resume them where you stopped. The window uses its own empty profile, which is deleted afterwards."), cx)),
                         ),
                 )
                 .child(
                     div()
-                        .flex()
+                        .flex_row_dir(cx)
                         .items_center()
                         .justify_between()
                         .child(div().flex().items_center().gap_2().child(spinner(cx)).child(div().text_xs().text_color(p.text3).child(t("Waiting for sign-in…"))))
@@ -1246,32 +1534,49 @@ impl AppView {
 
     fn render_sign_in(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = pal(cx);
-        let cancel = pill("si-cancel", None, "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
-            this.dialog = None;
-            cx.notify();
-        }));
+        let cancel =
+            pill("si-cancel", None, "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
+                this.dialog = None;
+                cx.notify();
+            }));
         let mut col = div().flex().flex_col().gap_4().child(
             div()
-                .flex()
+                .flex_row_dir(cx)
                 .items_center()
                 .gap_3()
                 .child(icon("circle-user").size_6().text_color(p.text))
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(t("Sign in to YouTube"))),
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.text)
+                        .child(t("Sign in to YouTube")),
+                ),
         );
         if let Some(err) = &self.login.error {
-            col = col.child(div().text_sm().text_color(p.text2).child(err.clone())).child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_end()
-                    .gap_2()
-                    .child(cancel)
-                    .child(pill("si-retry", Some("refresh-cw"), "Try again", cx).on_click(cx.listener(|this, _, _, cx| this.start_sign_in(cx)))),
-            );
+            col = col
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(p.text2)
+                        .child(rtl_prose(err.clone(), cx)),
+                )
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .flex_wrap()
+                        .justify_flex_end()
+                        .gap_2()
+                        .child(cancel)
+                        .child(
+                            pill("si-retry", Some("refresh-cw"), "Try again", cx)
+                                .on_click(cx.listener(|this, _, _, cx| this.start_sign_in(cx))),
+                        ),
+                );
         } else if let Some(dc) = &self.login.code {
             let code = dc.user_code.clone();
             col = col
-                .child(div().text_sm().text_color(p.text2).child(t("Google opened in your browser with this code filled in. Pick your account and allow access.")))
+                .child(div().text_sm().text_color(p.text2).child(rtl_prose(t("Google opened in your browser with this code filled in. Pick your account and allow access."), cx)))
                 .child(
                     div()
                         .id("si-code")
@@ -1297,14 +1602,14 @@ impl AppView {
                 )))
                 .child(
                     div()
-                        .flex()
+                        .flex_row_dir(cx)
                         .flex_wrap()
                         .items_center()
                         .justify_between()
                         .child(div().text_xs().text_color(p.text3).child(t("Waiting for approval…")))
                         .child(
                             div()
-                                .flex()
+                                .flex_row_dir(cx)
                                 .gap_2()
                                 .child(cancel)
                                 .child(pill("si-open", Some("external-link"), "Open browser", cx).bg(p.link).text_color(white()).on_click(
@@ -1315,10 +1620,22 @@ impl AppView {
         } else {
             col = col.child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .items_center()
                     .justify_between()
-                    .child(div().flex().items_center().gap_3().child(spinner(cx)).child(div().text_sm().text_color(p.text2).child(t("Getting a code…"))))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(spinner(cx))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(p.text2)
+                                    .child(t("Getting a code…")),
+                            ),
+                    )
                     .child(cancel),
             );
         }
@@ -1330,13 +1647,16 @@ impl AppView {
         if !crate::api::auth::signed_in() {
             return div()
                 .id("sign-in")
-                .flex()
+                .flex_row_dir(cx)
+                .role(Role::Button)
+                .accessibility_id("open-sign-in")
+                .aria_label(t("Sign in"))
                 .flex_none()
                 .items_center()
                 .gap_2()
                 .h_9()
                 .px_3()
-                .ml_2()
+                .ms(rems(0.5), cx)
                 .rounded_full()
                 .border_1()
                 .border_color(p.border)
@@ -1358,11 +1678,16 @@ impl AppView {
             .items_center()
             .justify_center()
             .size_10()
-            .ml_1()
+            .ms(rems(0.25), cx)
             .rounded_full()
             .cursor_pointer()
             .hover(move |s| s.bg(p.hover))
-            .child(crate::ui::avatar(acc.avatar.as_deref(), px(30.), &acc.name, cx))
+            .child(crate::ui::avatar(
+                acc.avatar.as_deref(),
+                px(30.),
+                &acc.name,
+                cx,
+            ))
             .on_click(move |ev, window, cx| {
                 let label = match &acc.handle {
                     Some(h) => format!("{}  ·  {}", acc.name, h),
@@ -1376,13 +1701,22 @@ impl AppView {
                             toast(cx, t("Channel handle unknown"));
                             return;
                         };
-                        let url = format!("https://www.youtube.com/{}", if h.starts_with('@') { h } else { format!("@{h}") });
+                        let url = format!(
+                            "https://www.youtube.com/{}",
+                            if h.starts_with('@') {
+                                h
+                            } else {
+                                format!("@{h}")
+                            }
+                        );
                         cx.spawn(async move |cx| {
                             let res = blocking(move || innertube::resolve_url(&url)).await;
                             let _ = cx.update(|cx| match res {
                                 Ok(innertube::ResolvedUrl::Channel(id)) => {
                                     if let Some(w) = cx.active_window() {
-                                        let _ = w.update(cx, |_, window, cx| navigate(Route::Channel(id), window, cx));
+                                        let _ = w.update(cx, |_, window, cx| {
+                                            navigate(Route::Channel(id), window, cx)
+                                        });
                                     }
                                 }
                                 _ => toast(cx, t("Could not open your channel")),
@@ -1390,10 +1724,18 @@ impl AppView {
                         })
                         .detach();
                     }),
-                    MenuItem::new("history", t("History"), |window, cx| navigate(Route::History, window, cx)),
-                    MenuItem::new("list-video", t("Playlists"), |window, cx| navigate(Route::Library, window, cx)),
-                    MenuItem::new("download", t("Downloads"), |window, cx| navigate(Route::Downloads, window, cx)),
-                    MenuItem::new("settings", t("Settings"), |window, cx| navigate(Route::Settings, window, cx)),
+                    MenuItem::new("history", t("History"), |window, cx| {
+                        navigate(Route::History, window, cx)
+                    }),
+                    MenuItem::new("list-video", t("Playlists"), |window, cx| {
+                        navigate(Route::Library, window, cx)
+                    }),
+                    MenuItem::new("download", t("Downloads"), |window, cx| {
+                        navigate(Route::Downloads, window, cx)
+                    }),
+                    MenuItem::new("settings", t("Settings"), |window, cx| {
+                        navigate(Route::Settings, window, cx)
+                    }),
                     MenuItem::new("refresh-cw", t("Sync subscriptions"), |_, cx| {
                         cx.spawn(async move |cx| {
                             let res = blocking(crate::api::auth::sync_subscriptions).await;
@@ -1410,7 +1752,8 @@ impl AppView {
                     }),
                     MenuItem::new("users", t("Switch account"), |_, cx| {
                         sign_out(cx);
-                        if let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()) {
+                        if let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade())
+                        {
                             app.update(cx, |a, cx| a.start_sign_in(cx));
                         }
                     }),
@@ -1424,7 +1767,9 @@ impl AppView {
     pub fn go(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
         // items without a known channel/video/playlist have nothing to open
         match &route {
-            Route::Channel(id) | Route::Playlist(id) | Route::Watch { id, .. } if id.is_empty() => return,
+            Route::Channel(id) | Route::Playlist(id) | Route::Watch { id, .. } if id.is_empty() => {
+                return;
+            }
             _ => {}
         }
         cx.set_global(OpenMenu(None));
@@ -1441,7 +1786,9 @@ impl AppView {
             return;
         }
         crate::ui::slot::clear_slot(cx);
-        if cx.global::<UiState>().fullscreen && !matches!(route, Route::Watch { .. } | Route::Shorts(_)) {
+        if cx.global::<UiState>().fullscreen
+            && !matches!(route, Route::Watch { .. } | Route::Shorts(_))
+        {
             exit_fullscreen(window, cx);
         }
         let page = build_page(&route, window, cx);
@@ -1460,9 +1807,17 @@ impl AppView {
 
     // ───── tabs ─────
 
-    pub fn new_tab(&mut self, route: Route, switch: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn new_tab(
+        &mut self,
+        route: Route,
+        switch: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match &route {
-            Route::Channel(id) | Route::Playlist(id) | Route::Watch { id, .. } if id.is_empty() => return,
+            Route::Channel(id) | Route::Playlist(id) | Route::Watch { id, .. } if id.is_empty() => {
+                return;
+            }
             _ => {}
         }
         cx.set_global(OpenMenu(None));
@@ -1508,7 +1863,10 @@ impl AppView {
         cur.playback = match &cur.route {
             Route::Watch { id, .. } => {
                 let pl = player(cx).read(cx);
-                pl.video.as_ref().filter(|v| &v.id == id).map(|v| (v.id.clone(), pl.queue.clone(), pl.queue_pos, pl.time))
+                pl.video
+                    .as_ref()
+                    .filter(|v| &v.id == id)
+                    .map(|v| (v.id.clone(), pl.queue.clone(), pl.queue_pos, pl.time))
             }
             _ => None,
         };
@@ -1528,7 +1886,11 @@ impl AppView {
         if self.independent_tab_playback {
             if stale {
                 if let Some(id) = playing.as_ref() {
-                    self.route = Route::Watch { id: id.clone(), playlist: None, start: None };
+                    self.route = Route::Watch {
+                        id: id.clone(),
+                        playlist: None,
+                        start: None,
+                    };
                 }
             }
             stale |= matches!(&self.route, Route::Shorts(_)) && playing.is_none();
@@ -1536,7 +1898,9 @@ impl AppView {
         if stale {
             // put back this tab's queue (the watch page keeps a queue its video is in)
             // and carry on where it left off
-            if let (Route::Watch { id, start, .. }, Some((vid, queue, pos, time))) = (&mut self.route, next.playback) {
+            if let (Route::Watch { id, start, .. }, Some((vid, queue, pos, time))) =
+                (&mut self.route, next.playback)
+            {
                 if *id == vid {
                     if queue.iter().any(|v| v.id == vid) {
                         player(cx).update(cx, |p, _| p.replace_queue(queue, pos));
@@ -1552,7 +1916,9 @@ impl AppView {
             _ => build_page(&self.route.clone(), window, cx),
         };
         crate::ui::slot::clear_slot(cx);
-        if cx.global::<UiState>().fullscreen && !matches!(self.route, Route::Watch { .. } | Route::Shorts(_)) {
+        if cx.global::<UiState>().fullscreen
+            && !matches!(self.route, Route::Watch { .. } | Route::Shorts(_))
+        {
             exit_fullscreen(window, cx);
         }
         window.set_window_title(&format!("{} - Stream Tube", self.route.title()));
@@ -1562,7 +1928,10 @@ impl AppView {
 
     fn activate_tab_player(&mut self, index: usize, cx: &mut Context<Self>) {
         self.tabs[index].last_active = std::time::Instant::now();
-        let selected = self.tabs[index].player.get_or_insert_with(|| new_tab_player(cx)).clone();
+        let selected = self.tabs[index]
+            .player
+            .get_or_insert_with(|| new_tab_player(cx))
+            .clone();
         set_active_player(selected.clone(), cx);
         selected.update(cx, |p, cx| p.set_foreground(true, cx));
         self.had_video = selected.read(cx).video.is_some();
@@ -1571,20 +1940,36 @@ impl AppView {
         self.mini_view = cx.new(|cx| PlayerView::new(selected.clone(), true, cx));
 
         let pip = crate::ui::pip::owner(cx);
-        let mut running: Vec<_> = self.tabs.iter().enumerate().filter_map(|(i, tab)| {
-            let player = tab.player.as_ref()?;
-            (i != index && player.read(cx).has_engine()).then(|| (tab.last_active, i, player.clone()))
-        }).collect();
-        running.sort_by_key(|(last_active, _, player)| (pip.as_ref() == Some(player), *last_active));
+        let mut running: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, tab)| {
+                let player = tab.player.as_ref()?;
+                (i != index && player.read(cx).has_engine())
+                    .then(|| (tab.last_active, i, player.clone()))
+            })
+            .collect();
+        running
+            .sort_by_key(|(last_active, _, player)| (pip.as_ref() == Some(player), *last_active));
         let excess = running.len().saturating_sub(MAX_BACKGROUND_PLAYERS);
         for (_, i, player) in running.into_iter().take(excess) {
             let playback = player.read(cx);
             if let Some(video) = &playback.video {
                 let tab = &mut self.tabs[i];
                 if matches!(&tab.route, Route::Watch { id, .. } if id != &video.id) {
-                    tab.route = Route::Watch { id: video.id.clone(), playlist: None, start: None };
+                    tab.route = Route::Watch {
+                        id: video.id.clone(),
+                        playlist: None,
+                        start: None,
+                    };
                 }
-                tab.playback = Some((video.id.clone(), playback.queue.clone(), playback.queue_pos, playback.time));
+                tab.playback = Some((
+                    video.id.clone(),
+                    playback.queue.clone(),
+                    playback.queue_pos,
+                    playback.time,
+                ));
             }
             player.update(cx, |p, cx| p.release_tab_engine(cx));
         }
@@ -1596,7 +1981,11 @@ impl AppView {
         }
         if index == self.active_tab {
             // show the neighbour first, then drop this one
-            let to = if index + 1 < self.tabs.len() { index + 1 } else { index - 1 };
+            let to = if index + 1 < self.tabs.len() {
+                index + 1
+            } else {
+                index - 1
+            };
             self.switch_tab(to, window, cx);
         }
         let tab = self.tabs.remove(index);
@@ -1627,9 +2016,17 @@ impl AppView {
         match route {
             Route::Watch { id, .. } => {
                 let p = player(cx).read(cx);
-                p.video.as_ref().filter(|v| &v.id == id && !v.title.is_empty()).map(|v| v.title.clone()).unwrap_or_else(|| t("Video").into())
+                p.video
+                    .as_ref()
+                    .filter(|v| &v.id == id && !v.title.is_empty())
+                    .map(|v| v.title.clone())
+                    .unwrap_or_else(|| t("Video").into())
             }
-            Route::Channel(id) => store::subscriptions().into_iter().find(|s| &s.channel_id == id).map(|s| s.name).unwrap_or_else(|| t("Channel").into()),
+            Route::Channel(id) => store::subscriptions()
+                .into_iter()
+                .find(|s| &s.channel_id == id)
+                .map(|s| s.name)
+                .unwrap_or_else(|| t("Channel").into()),
             r => r.title(),
         }
     }
@@ -1655,9 +2052,18 @@ impl AppView {
             .iter()
             .enumerate()
             .filter(|(_, t)| t.pinned)
-            .map(|(i, t)| if i == self.active_tab { self.route.clone() } else { t.route.clone() })
+            .map(|(i, t)| {
+                if i == self.active_tab {
+                    self.route.clone()
+                } else {
+                    t.route.clone()
+                }
+            })
             .collect();
-        store::kv_set("pinned_tabs", &serde_json::to_string(&pinned).unwrap_or_default());
+        store::kv_set(
+            "pinned_tabs",
+            &serde_json::to_string(&pinned).unwrap_or_default(),
+        );
     }
 
     fn toggle_pin_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1675,7 +2081,7 @@ impl AppView {
         let p = pal(cx);
         let mut strip = div()
             .id("tabs")
-            .flex()
+            .flex_row_dir(cx)
             .flex_none()
             .items_center()
             .gap_1()
@@ -1688,19 +2094,23 @@ impl AppView {
         for i in 0..self.tabs.len() {
             let active = i == self.active_tab;
             let pinned = self.tabs[i].pinned;
-            let route = if active { self.route.clone() } else { self.tabs[i].route.clone() };
+            let route = if active {
+                self.route.clone()
+            } else {
+                self.tabs[i].route.clone()
+            };
             let id = self.tabs[i].id;
             let label = Self::tab_label(&route, cx);
             strip = strip.child(
                 div()
                     .id(("tab", id))
-                    .flex()
+                    .flex_row_dir(cx)
                     .flex_none()
                     .items_center()
                     .gap_2()
                     .h(px(30.))
-                    .pl_3()
-                    .pr_1()
+                    .ps(rems(0.75), cx)
+                    .pe(rems(0.25), cx)
                     .w(if pinned { px(160.) } else { px(200.) })
                     .rounded_lg()
                     .cursor_pointer()
@@ -1729,9 +2139,13 @@ impl AppView {
                                 "pin",
                                 t(if pinned { "Unpin tab" } else { "Pin tab" }),
                                 move |_, cx| {
-                                    if let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()) {
+                                    if let Some(app) =
+                                        cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade())
+                                    {
                                         app.update(cx, |a, cx| {
-                                            if let Some(idx) = a.tabs.iter().position(|t| t.id == id) {
+                                            if let Some(idx) =
+                                                a.tabs.iter().position(|t| t.id == id)
+                                            {
                                                 a.toggle_pin_tab(idx, cx);
                                             }
                                         });
@@ -1739,20 +2153,32 @@ impl AppView {
                                 },
                             )];
                             if can_close {
-                                items.push(MenuItem::new("x", t("Close tab"), move |window, cx| {
-                                    if let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()) {
-                                        app.update(cx, |a, cx| {
-                                            if let Some(idx) = a.tabs.iter().position(|t| t.id == id) {
-                                                a.close_tab(idx, window, cx);
-                                            }
-                                        });
-                                    }
-                                }));
+                                items.push(MenuItem::new(
+                                    "x",
+                                    t("Close tab"),
+                                    move |window, cx| {
+                                        if let Some(app) =
+                                            cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade())
+                                        {
+                                            app.update(cx, |a, cx| {
+                                                if let Some(idx) =
+                                                    a.tabs.iter().position(|t| t.id == id)
+                                                {
+                                                    a.close_tab(idx, window, cx);
+                                                }
+                                            });
+                                        }
+                                    },
+                                ));
                             }
                             open_menu(ev.position, items, window, cx);
                         }),
                     )
-                    .child(icon(Self::tab_icon(&route)).size_4().text_color(if active { p.accent } else { p.text2 }))
+                    .child(icon(Self::tab_icon(&route)).size_4().text_color(if active {
+                        p.accent
+                    } else {
+                        p.text2
+                    }))
                     .child(
                         div()
                             .flex_1()
@@ -1809,7 +2235,9 @@ impl AppView {
                 .cursor_pointer()
                 .hover(|d| d.bg(p.hover))
                 .child(icon("plus").size_4().text_color(p.text2))
-                .on_click(cx.listener(|this, _, window, cx| this.new_tab(Route::Home, true, window, cx))),
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.new_tab(Route::Home, true, window, cx)),
+                ),
         );
         Some(strip.into_any_element())
     }
@@ -1820,7 +2248,9 @@ impl AppView {
             let cur_r = std::mem::replace(&mut self.route, r);
             let cur_p = std::mem::replace(&mut self.page, p);
             self.forward.push((cur_r, cur_p));
-            if cx.global::<UiState>().fullscreen && !matches!(self.route, Route::Watch { .. } | Route::Shorts(_)) {
+            if cx.global::<UiState>().fullscreen
+                && !matches!(self.route, Route::Watch { .. } | Route::Shorts(_))
+            {
                 toggle_fullscreen(window, cx);
             }
             // If we return to a watch page for a different video than is playing, rebuild it
@@ -1841,7 +2271,9 @@ impl AppView {
             let cur_r = std::mem::replace(&mut self.route, r);
             let cur_p = std::mem::replace(&mut self.page, p);
             self.history.push((cur_r, cur_p));
-            if cx.global::<UiState>().fullscreen && !matches!(self.route, Route::Watch { .. } | Route::Shorts(_)) {
+            if cx.global::<UiState>().fullscreen
+                && !matches!(self.route, Route::Watch { .. } | Route::Shorts(_))
+            {
                 toggle_fullscreen(window, cx);
             }
             window.set_window_title(&format!("{} - Stream Tube", self.route.title()));
@@ -1871,8 +2303,12 @@ impl AppView {
             return;
         }
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
-            let still = this.update(cx, |a, _| a.suggestion_serial == serial).unwrap_or(false);
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(150))
+                .await;
+            let still = this
+                .update(cx, |a, _| a.suggestion_serial == serial)
+                .unwrap_or(false);
             if !still {
                 return;
             }
@@ -1895,15 +2331,26 @@ impl AppView {
         }
         self.show_suggestions = false;
         self.sel_suggestion = None;
-        self.search.update(cx, |s, cx| s.set_value(q.clone(), window, cx));
+        self.search
+            .update(cx, |s, cx| s.set_value(q.clone(), window, cx));
         window.focus(&self.focus, cx);
         // Direct links
         if let Some(r) = innertube::parse_youtube_url(&q) {
             let route = match r {
                 innertube::ResolvedUrl::Video(id) => {
-                    let t = q.split(['?', '&']).find_map(|kv| kv.strip_prefix("t=")).and_then(|t| t.trim_end_matches('s').parse::<f64>().ok());
-                    let list = q.split(['?', '&']).find_map(|kv| kv.strip_prefix("list=")).map(str::to_string);
-                    Route::Watch { id, playlist: list, start: t }
+                    let t = q
+                        .split(['?', '&'])
+                        .find_map(|kv| kv.strip_prefix("t="))
+                        .and_then(|t| t.trim_end_matches('s').parse::<f64>().ok());
+                    let list = q
+                        .split(['?', '&'])
+                        .find_map(|kv| kv.strip_prefix("list="))
+                        .map(str::to_string);
+                    Route::Watch {
+                        id,
+                        playlist: list,
+                        start: t,
+                    }
                 }
                 innertube::ResolvedUrl::Channel(id) => Route::Channel(id),
                 innertube::ResolvedUrl::Playlist(id) => Route::Playlist(id),
@@ -1912,14 +2359,34 @@ impl AppView {
             return;
         }
         if q.contains("youtube.com/") || q.starts_with('@') {
-            let url = if q.starts_with('@') { format!("https://www.youtube.com/{q}") } else { q.clone() };
+            let url = if q.starts_with('@') {
+                format!("https://www.youtube.com/{q}")
+            } else {
+                q.clone()
+            };
             cx.spawn_in(window, async move |this, cx| {
                 let r = blocking(move || innertube::resolve_url(&url)).await;
                 let _ = this.update_in(cx, |a, window, cx| match r {
                     Ok(innertube::ResolvedUrl::Channel(id)) => a.go(Route::Channel(id), window, cx),
-                    Ok(innertube::ResolvedUrl::Playlist(id)) => a.go(Route::Playlist(id), window, cx),
-                    Ok(innertube::ResolvedUrl::Video(id)) => a.go(Route::Watch { id, playlist: None, start: None }, window, cx),
-                    Err(e) => toast(cx, tf!("Could not open link: {0}", crate::ui::friendly_error(&e.to_string()))),
+                    Ok(innertube::ResolvedUrl::Playlist(id)) => {
+                        a.go(Route::Playlist(id), window, cx)
+                    }
+                    Ok(innertube::ResolvedUrl::Video(id)) => a.go(
+                        Route::Watch {
+                            id,
+                            playlist: None,
+                            start: None,
+                        },
+                        window,
+                        cx,
+                    ),
+                    Err(e) => toast(
+                        cx,
+                        tf!(
+                            "Could not open link: {0}",
+                            crate::ui::friendly_error(&e.to_string())
+                        ),
+                    ),
                 });
             })
             .detach();
@@ -1934,7 +2401,11 @@ impl AppView {
         cx.set_global(OpenMenu(None));
         if let Route::Watch { id, playlist, .. } = self.route.clone() {
             let t = player(cx).read(cx).time;
-            self.route = Route::Watch { id, playlist, start: Some(t) };
+            self.route = Route::Watch {
+                id,
+                playlist,
+                start: Some(t),
+            };
         }
         self.page = build_page(&self.route, window, cx);
         cx.notify();
@@ -1963,11 +2434,16 @@ impl AppView {
         if active > 0 {
             btn = btn
                 .child(
-                    icon("arrow-down-to-line").size_5().text_color(p.accent).with_animation(
-                        "dl-bob",
-                        Animation::new(std::time::Duration::from_millis(1100)).repeat().with_easing(pulsating_between(0.35, 1.0)),
-                        |svg, d| svg.opacity(d),
-                    ),
+                    icon("arrow-down-to-line")
+                        .size_5()
+                        .text_color(p.accent)
+                        .with_animation(
+                            "dl-bob",
+                            Animation::new(std::time::Duration::from_millis(1100))
+                                .repeat()
+                                .with_easing(pulsating_between(0.35, 1.0)),
+                            |svg, d| svg.opacity(d),
+                        ),
                 )
                 // progress track under the icon
                 .child(
@@ -1979,7 +2455,13 @@ impl AppView {
                         .h(px(3.))
                         .rounded_full()
                         .bg(p.border)
-                        .child(div().h_full().rounded_full().bg(p.accent).w(relative(prog.clamp(0.04, 1.0)))),
+                        .child(
+                            div()
+                                .h_full()
+                                .rounded_full()
+                                .bg(p.accent)
+                                .w(relative(prog.clamp(0.04, 1.0))),
+                        ),
                 )
                 .child(
                     div()
@@ -2000,7 +2482,8 @@ impl AppView {
                         .child(active.to_string())
                         .with_animation(
                             SharedString::from(format!("dl-badge-{active}")),
-                            Animation::new(std::time::Duration::from_millis(350)).with_easing(ease_out_quint()),
+                            Animation::new(std::time::Duration::from_millis(350))
+                                .with_easing(ease_out_quint()),
                             |d, t| d.opacity(t),
                         ),
                 );
@@ -2016,7 +2499,10 @@ impl AppView {
         }
         use crate::downloads::{self, JobStatus};
         let p = pal(cx);
-        let mut jobs = cx.try_global::<downloads::Downloads>().map(|d| d.jobs.lock().clone()).unwrap_or_default();
+        let mut jobs = cx
+            .try_global::<downloads::Downloads>()
+            .map(|d| d.jobs.lock().clone())
+            .unwrap_or_default();
         jobs.reverse();
         let small_btn = |id: SharedString, ic: &'static str, tip: &'static str| {
             let _ = tip;
@@ -2032,7 +2518,13 @@ impl AppView {
                 .hover(move |s| s.bg(p.hover))
                 .child(icon(ic).size_4().text_color(p.text2))
         };
-        let mut list = div().id("dlp-list").flex().flex_col().max_h(px(420.)).overflow_y_scroll().py_1();
+        let mut list = div()
+            .id("dlp-list")
+            .flex()
+            .flex_col()
+            .max_h(px(420.))
+            .overflow_y_scroll()
+            .py_1();
         if jobs.is_empty() {
             list = list.child(
                 div()
@@ -2042,24 +2534,57 @@ impl AppView {
                     .gap_2()
                     .py_8()
                     .child(icon("download").size_8().text_color(p.text3))
-                    .child(div().text_sm().text_color(p.text2).child(t("No downloads yet"))),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(p.text2)
+                            .child(t("No downloads yet")),
+                    ),
             );
         }
         for j in jobs.iter().take(50) {
             let id = j.id;
-            let title = if j.video.title.is_empty() { j.video.id.clone() } else { j.video.title.clone() };
+            let title = if j.video.title.is_empty() {
+                j.video.id.clone()
+            } else {
+                j.video.title.clone()
+            };
             let (line, color, running) = match &j.status {
                 JobStatus::Queued => (t("Waiting…").to_string(), p.text2, true),
-                JobStatus::Running => (format!("{:.0}%{}", j.progress * 100.0, j.detail.split("at").nth(1).map(|s| format!(", {}", s.trim())).unwrap_or_default()), p.text2, true),
+                JobStatus::Running => (
+                    format!(
+                        "{:.0}%{}",
+                        j.progress * 100.0,
+                        j.detail
+                            .split("at")
+                            .nth(1)
+                            .map(|s| format!(", {}", s.trim()))
+                            .unwrap_or_default()
+                    ),
+                    p.text2,
+                    true,
+                ),
                 JobStatus::Done(path) => (
-                    std::fs::metadata(path).map(|m| tf!("{0} MB, {1}", format_args!("{:.1}", m.len() as f64 / 1e6), j.format)).unwrap_or_else(|_| t("File missing").into()),
+                    std::fs::metadata(path)
+                        .map(|m| {
+                            tf!(
+                                "{0} MB, {1}",
+                                format_args!("{:.1}", m.len() as f64 / 1e6),
+                                j.format
+                            )
+                        })
+                        .unwrap_or_else(|_| t("File missing").into()),
                     p.text2,
                     false,
                 ),
                 JobStatus::Failed(e) => (tf!("Failed: {0}", e), rgb(0xff4e45).into(), false),
                 JobStatus::Cancelled => (t("Cancelled").into(), p.text2, false),
             };
-            let done_path = if let JobStatus::Done(pth) = &j.status { Some(pth.clone()) } else { None };
+            let done_path = if let JobStatus::Done(pth) = &j.status {
+                Some(pth.clone())
+            } else {
+                None
+            };
             let open_path = done_path.clone();
             let mut row = div()
                 .id(SharedString::from(format!("dlp-{id}")))
@@ -2085,7 +2610,12 @@ impl AppView {
                         .rounded_md()
                         .overflow_hidden()
                         .bg(p.chip)
-                        .child(img(j.video.thumbnail.clone()).size_full().rounded_md().object_fit(ObjectFit::Cover)),
+                        .child(
+                            img(j.video.thumbnail.clone())
+                                .size_full()
+                                .rounded_md()
+                                .object_fit(ObjectFit::Cover),
+                        ),
                 )
                 .child(
                     div()
@@ -2094,7 +2624,14 @@ impl AppView {
                         .flex_1()
                         .min_w_0()
                         .gap_0p5()
-                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(p.text).truncate().child(title))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(p.text)
+                                .truncate()
+                                .child(title),
+                        )
                         .child(div().text_xs().text_color(color).truncate().child(line))
                         .when(running, |d| {
                             d.child(
@@ -2104,30 +2641,61 @@ impl AppView {
                                     .w_full()
                                     .rounded_full()
                                     .bg(p.border)
-                                    .child(div().h_full().rounded_full().bg(p.accent).w(relative(j.progress.clamp(0.02, 1.0)))),
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .rounded_full()
+                                            .bg(p.accent)
+                                            .w(relative(j.progress.clamp(0.02, 1.0))),
+                                    ),
                             )
                         }),
                 );
             if running {
-                row = row.child(small_btn(SharedString::from(format!("dlp-c-{id}")), "x", "Cancel").on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    downloads::cancel(id, cx)
-                }));
+                row = row.child(
+                    small_btn(SharedString::from(format!("dlp-c-{id}")), "x", "Cancel").on_click(
+                        move |_, _, cx| {
+                            cx.stop_propagation();
+                            downloads::cancel(id, cx)
+                        },
+                    ),
+                );
             } else {
                 if let Some(pth) = done_path.clone() {
-                    row = row.child(small_btn(SharedString::from(format!("dlp-f-{id}")), "folder-open", t("Show in folder")).on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        reveal_in_folder(&pth, cx);
-                    }));
-                    row = row.child(small_btn(SharedString::from(format!("dlp-d-{id}")), "trash-2", t("Delete file")).on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        downloads::delete_file(id, cx)
-                    }));
+                    row = row.child(
+                        small_btn(
+                            SharedString::from(format!("dlp-f-{id}")),
+                            "folder-open",
+                            t("Show in folder"),
+                        )
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            reveal_in_folder(&pth, cx);
+                        }),
+                    );
+                    row = row.child(
+                        small_btn(
+                            SharedString::from(format!("dlp-d-{id}")),
+                            "trash-2",
+                            t("Delete file"),
+                        )
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            downloads::delete_file(id, cx)
+                        }),
+                    );
                 }
-                row = row.child(small_btn(SharedString::from(format!("dlp-r-{id}")), "x", t("Remove from list")).on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    downloads::remove(id, cx)
-                }));
+                row = row.child(
+                    small_btn(
+                        SharedString::from(format!("dlp-r-{id}")),
+                        "x",
+                        t("Remove from list"),
+                    )
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        downloads::remove(id, cx)
+                    }),
+                );
             }
             list = list.child(row);
         }
@@ -2144,20 +2712,27 @@ impl AppView {
                 .hover(move |s| s.bg(p.hover))
                 .child(t(label))
         };
-        let has_finished = jobs.iter().any(|j| !matches!(j.status, JobStatus::Running | JobStatus::Queued));
+        let has_finished = jobs
+            .iter()
+            .any(|j| !matches!(j.status, JobStatus::Running | JobStatus::Queued));
         Some(
             deferred(
                 div()
                     .absolute()
                     .inset_0()
                     .child(
-                        div().id("dlp-scrim").absolute().inset_0().occlude().on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                this.dl_panel = false;
-                                cx.notify();
-                            }),
-                        ),
+                        div()
+                            .id("dlp-scrim")
+                            .absolute()
+                            .inset_0()
+                            .occlude()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.dl_panel = false;
+                                    cx.notify();
+                                }),
+                            ),
                     )
                     .child(
                         div()
@@ -2165,7 +2740,8 @@ impl AppView {
                             .occlude()
                             .absolute()
                             .top(px(52.))
-                            .right(px(150.))
+                            .when(LayoutDirection::global(cx).is_rtl(), |d| d.left(px(12.)))
+                            .when(!LayoutDirection::global(cx).is_rtl(), |d| d.right(px(150.)))
                             .w(px(400.))
                             .rounded_xl()
                             .bg(p.surface2)
@@ -2176,36 +2752,49 @@ impl AppView {
                             .flex_col()
                             .child(
                                 div()
-                                    .flex()
+                                    .flex_row_dir(cx)
                                     .items_center()
                                     .justify_between()
                                     .px_4()
                                     .pt_3()
                                     .pb_2()
-                                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(t("Downloads")))
+                                    .child(
+                                        div()
+                                            .text_base()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(p.text)
+                                            .child(t("Downloads")),
+                                    )
                                     .when(has_finished, |d| {
-                                        d.child(footer_btn("dlp-clear", "Clear list").on_click(|_, _, cx| downloads::clear_history(cx)))
+                                        d.child(
+                                            footer_btn("dlp-clear", "Clear list")
+                                                .on_click(|_, _, cx| downloads::clear_history(cx)),
+                                        )
                                     }),
                             )
                             .child(list)
                             .child(
                                 div()
-                                    .flex()
+                                    .flex_row_dir(cx)
                                     .items_center()
                                     .justify_between()
                                     .px_2()
                                     .py_2()
                                     .border_t_1()
                                     .border_color(p.border)
-                                    .child(footer_btn("dlp-folder", "Open folder").on_click(|_, _, _| {
-                                        let d = store::settings_snapshot().download_dir.clone();
-                                        let _ = std::fs::create_dir_all(&d);
-                                        let _ = open::that(d);
-                                    }))
-                                    .child(footer_btn("dlp-page", "Open downloads page").on_click(cx.listener(|this, _, window, cx| {
-                                        this.dl_panel = false;
-                                        this.go(Route::Downloads, window, cx)
-                                    }))),
+                                    .child(footer_btn("dlp-folder", "Open folder").on_click(
+                                        |_, _, _| {
+                                            let d = store::settings_snapshot().download_dir.clone();
+                                            let _ = std::fs::create_dir_all(&d);
+                                            let _ = open::that(d);
+                                        },
+                                    ))
+                                    .child(footer_btn("dlp-page", "Open downloads page").on_click(
+                                        cx.listener(|this, _, window, cx| {
+                                            this.dl_panel = false;
+                                            this.go(Route::Downloads, window, cx)
+                                        }),
+                                    )),
                             ),
                     ),
             )
@@ -2216,7 +2805,12 @@ impl AppView {
 
     // ───── keyboard ─────
 
-    fn capture_fullscreen_escape(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn capture_fullscreen_escape(
+        &mut self,
+        ev: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if ev.keystroke.key == "escape"
             && cx.global::<UiState>().fullscreen
             && !self.dl_panel
@@ -2244,7 +2838,11 @@ impl AppView {
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let search_focused = self.search.read(cx).focus_handle(cx).is_focused(window);
-        let dialog_focused = self.dialog_input.read(cx).focus_handle(cx).is_focused(window);
+        let dialog_focused = self
+            .dialog_input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window);
         let k = shortcut_key(&ev.keystroke.key);
         let m = &ev.keystroke.modifiers;
         if k == "f5" || (m.control && k == "r" && !search_focused && !dialog_focused) {
@@ -2270,10 +2868,16 @@ impl AppView {
                     self.cycle_tab(if k == "pageup" { -1 } else { 1 }, window, cx);
                     return;
                 }
-                d if self.tabs.len() > 1 && matches!(d, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") => {
+                d if self.tabs.len() > 1
+                    && matches!(d, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") =>
+                {
                     let n: usize = d.parse().unwrap_or(1);
                     // Ctrl+9 is the last tab, as in browsers
-                    let i = if n == 9 { self.tabs.len() - 1 } else { (n - 1).min(self.tabs.len() - 1) };
+                    let i = if n == 9 {
+                        self.tabs.len() - 1
+                    } else {
+                        (n - 1).min(self.tabs.len() - 1)
+                    };
                     self.switch_tab(i, window, cx);
                     return;
                 }
@@ -2337,7 +2941,11 @@ impl AppView {
             return;
         }
         // Ctrl+Left / Ctrl+Right: previous / next chapter (not while typing)
-        if m.control && !m.shift && (k == "left" || k == "right") && window.focused(cx).map(|f| f == self.focus).unwrap_or(true) {
+        if m.control
+            && !m.shift
+            && (k == "left" || k == "right")
+            && window.focused(cx).map(|f| f == self.focus).unwrap_or(true)
+        {
             let p = player(cx);
             if p.read(cx).video.is_some() {
                 p.update(cx, |pl: &mut Player, cx| {
@@ -2474,9 +3082,13 @@ impl AppView {
                 }
                 // aspect ratio: Original, Auto, Zoom to fill, Stretch, 21:9...
                 ("z", false) => {
-                    let next = crate::player::aspect::next_mode(&store::settings_snapshot().aspect_mode);
+                    let next =
+                        crate::player::aspect::next_mode(&store::settings_snapshot().aspect_mode);
                     crate::player::view::set_aspect_mode(next, cx);
-                    crate::ui::toast(cx, tf!("Aspect ratio: {0}", t(crate::player::aspect::label(next))));
+                    crate::ui::toast(
+                        cx,
+                        tf!("Aspect ratio: {0}", t(crate::player::aspect::label(next))),
+                    );
                     true
                 }
                 _ => false,
@@ -2502,7 +3114,11 @@ impl AppView {
                     let route = if v.is_short && !store::settings_snapshot().shorts_in_player {
                         Route::Shorts(Some(v.id))
                     } else {
-                        Route::Watch { id: v.id, playlist: None, start: None }
+                        Route::Watch {
+                            id: v.id,
+                            playlist: None,
+                            start: None,
+                        }
                     };
                     self.go(route, window, cx);
                 }
@@ -2518,60 +3134,81 @@ impl AppView {
         localize_placeholder(&self.search, "Search or paste a YouTube link", window, cx);
         let p = pal(cx);
         let can_back = !self.history.is_empty();
-        let suggestions = if self.show_suggestions { self.all_suggestions() } else { Vec::new() };
-        let hist: std::collections::HashSet<String> = self.history_suggestions.iter().cloned().collect();
+        let suggestions = if self.show_suggestions {
+            self.all_suggestions()
+        } else {
+            Vec::new()
+        };
+        let hist: std::collections::HashSet<String> =
+            self.history_suggestions.iter().cloned().collect();
         let sel = self.sel_suggestion;
         let maximized = window.is_maximized();
-        let bar = div()
-            .id("topbar")
-            .flex()
-            .flex_none()
+        let rtl = LayoutDirection::global(cx).is_rtl();
+        let compact = rtl && window.viewport_size().width < px(960.);
+        let content = div()
+            .flex_row_dir(cx)
+            .flex_1()
+            .min_w_0()
             .items_center()
-            .h(px(56.))
-            .pl_4()
-            .bg(p.bg)
+            .ps(rems(1.), cx)
             .child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .items_center()
                     .gap_2()
-                    .child(icon_button("menu", "menu", cx).on_click(cx.listener(|this, _, _, cx| {
-                        if matches!(this.route, Route::Watch { .. }) {
-                            this.drawer_open ^= true;
-                        } else {
-                            cx.global_mut::<UiState>().sidebar_open ^= true;
-                        }
-                        cx.refresh_windows();
-                    })))
                     .child(
-                        icon_button("back", "arrow-left", cx)
+                        icon_button("menu", "menu", cx)
+                            .role(Role::Button)
+                            .aria_label(t("Navigation menu"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if matches!(this.route, Route::Watch { .. }) {
+                                    this.drawer_open ^= true;
+                                } else {
+                                    cx.global_mut::<UiState>().sidebar_open ^= true;
+                                }
+                                cx.refresh_windows();
+                            })),
+                    )
+                    .child(
+                        icon_button("back", back_icon(LayoutDirection::global(cx)), cx)
+                            .role(Role::Button)
+                            .aria_label(t("Back"))
                             .when(!can_back, |d| d.opacity(0.35))
                             .on_click(cx.listener(|this, _, window, cx| this.back(window, cx))),
                     )
-                    .child(icon_button("refresh", "rotate-cw", cx).on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))))
+                    .child(
+                        icon_button("refresh", "rotate-cw", cx)
+                            .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
+                    )
                     .child(
                         div()
                             .id("logo")
                             .flex()
                             .items_center()
                             .gap_1()
-                            .ml_2()
+                            .ms(rems(0.5), cx)
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, window, cx| this.go(Route::Home, window, cx)))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.go(Route::Home, window, cx)),
+                            )
                             .child(crate::ui::logo(px(28.)))
-                            .child(crate::ui::wordmark(cx)),
+                            .when(!compact, |d| d.child(crate::ui::wordmark(cx))),
                     ),
             )
             // Native caption hit testing must leave the controls clickable.
-            .child(drag_gap("drag-l").flex_1().min_w(px(24.)))
+            .child(
+                drag_gap("drag-l")
+                    .flex_1()
+                    .min_w(px(if compact { 8. } else { 24. })),
+            )
             .child(
                 div()
                     .relative()
-                    .flex()
+                    .flex_row_dir(cx)
                     .items_center()
                     // YouTube-width search box that gives way on narrow windows
                     .flex_shrink(1.)
-                    .min_w(px(220.))
+                    .min_w(px(if compact { 160. } else { 220. }))
                     .w(px(640.))
                     .child(
                         div()
@@ -2579,8 +3216,9 @@ impl AppView {
                             .flex_1()
                             .h_10()
                             .items_center()
-                            .pl_4()
-                            .rounded_l_full()
+                            .ps(rems(1.), cx)
+                            .when(rtl, |d| d.rounded_r_full())
+                            .when(!rtl, |d| d.rounded_l_full())
                             .border_1()
                             .border_color(p.border)
                             .bg(if p.dark { rgb(0x121212).into() } else { p.bg })
@@ -2589,14 +3227,18 @@ impl AppView {
                     .child(
                         div()
                             .id("search-btn")
+                            .role(Role::Button)
+                            .accessibility_id("submit-search")
+                            .aria_label(t("Search"))
                             .flex()
                             .items_center()
                             .justify_center()
                             .w(px(64.))
                             .h_10()
-                            .rounded_r_full()
+                            .when(rtl, |d| d.rounded_l_full())
+                            .when(!rtl, |d| d.rounded_r_full())
                             .border_1()
-                            .border_l_0()
+                            .border_s(px(0.), cx)
                             .border_color(p.border)
                             .bg(p.chip)
                             .cursor_pointer()
@@ -2615,8 +3257,8 @@ impl AppView {
                                     .when(cfg!(target_os = "linux"), |d| d.occlude())
                                     .absolute()
                                     .top(px(44.))
-                                    .left_0()
-                                    .right(px(64.))
+                                    .inset_s(px(0.), cx)
+                                    .inset_e(px(64.), cx)
                                     .py_2()
                                     .rounded_xl()
                                     .bg(p.surface2)
@@ -2629,7 +3271,7 @@ impl AppView {
                                         let s3 = s.clone();
                                         div()
                                             .id(SharedString::from(format!("sug-{i}")))
-                                            .flex()
+                                            .flex_row_dir(cx)
                                             .items_center()
                                             .gap_3()
                                             .px_4()
@@ -2637,8 +3279,18 @@ impl AppView {
                                             .cursor_pointer()
                                             .when(sel == Some(i), |d| d.bg(p.hover))
                                             .hover(move |st| st.bg(p.hover))
-                                            .child(icon(if is_hist { "history" } else { "search" }).size_4().text_color(p.text2))
-                                            .child(div().flex_1().text_color(p.text).font_weight(FontWeight::MEDIUM).child(s))
+                                            .child(
+                                                icon(if is_hist { "history" } else { "search" })
+                                                    .size_4()
+                                                    .text_color(p.text2),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .text_color(p.text)
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(s),
+                                            )
                                             .when(is_hist, |d| {
                                                 d.child(
                                                     div()
@@ -2646,35 +3298,66 @@ impl AppView {
                                                         .text_xs()
                                                         .text_color(p.link)
                                                         .child(t("Remove"))
-                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                            cx.stop_propagation();
-                                                            store::search_history_remove(&s3);
-                                                            let q = this.search.read(cx).value().to_string();
-                                                            this.update_suggestions(q, cx);
-                                                        })),
+                                                        .on_mouse_down(
+                                                            MouseButton::Left,
+                                                            cx.listener(move |this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                store::search_history_remove(&s3);
+                                                                let q = this
+                                                                    .search
+                                                                    .read(cx)
+                                                                    .value()
+                                                                    .to_string();
+                                                                this.update_suggestions(q, cx);
+                                                            }),
+                                                        ),
                                                 )
                                             })
-                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                                                this.submit_search(s2.clone(), window, cx);
-                                            }))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.submit_search(s2.clone(), window, cx);
+                                                }),
+                                            )
                                     })),
                             )
                             .with_priority(2),
                         )
                     }),
             )
-            .child(drag_gap("drag-r").flex_1().min_w(px(24.)))
+            .child(
+                drag_gap("drag-r")
+                    .flex_1()
+                    .min_w(px(if compact { 8. } else { 24. })),
+            )
             .child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .items_center()
                     .gap_1()
                     .child(self.render_dl_button(cx))
-                    .child(icon_button("settings", "settings", cx).on_click(cx.listener(|this, _, window, cx| this.go(Route::Settings, window, cx))))
-                    .child(self.account_button(cx))
-                    .child(drag_gap("drag-c").w_3())
-                    .child(window_controls(maximized, cx)),
+                    .child(
+                        icon_button("settings", "settings", cx)
+                            .role(Role::Button)
+                            .accessibility_id("open-settings")
+                            .aria_label(t("Settings"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.go(Route::Settings, window, cx)
+                            })),
+                    )
+                    .child(self.account_button(cx)),
             );
+        // Keep window controls on the Windows caption edge.
+        let bar = div()
+            .id("topbar")
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(56.))
+            .bg(p.bg)
+            .child(content)
+            .child(drag_gap("drag-c").w_5().flex_none())
+            .child(window_controls(maximized, cx));
         #[cfg(target_os = "linux")]
         let bar = super::topbar_drag::wrap(bar, self.search.clone(), window, cx);
         bar
@@ -2702,7 +3385,8 @@ impl AppView {
                     cx.notify();
                 }
             });
-        }).detach();
+        })
+        .detach();
     }
 
     fn sync_favorite_membership(&mut self, cx: &mut Context<Self>) {
@@ -2710,16 +3394,28 @@ impl AppView {
             self.favorite_membership = None;
             return;
         };
-        let Some(playlist) = self.yt_playlists.as_deref().and_then(account_favorites) else { return };
-        if self.favorite_membership.as_ref().is_none_or(|favorite| favorite.video != video.id || favorite.playlist != playlist.id) {
+        let Some(playlist) = self.yt_playlists.as_deref().and_then(account_favorites) else {
+            return;
+        };
+        if self
+            .favorite_membership
+            .as_ref()
+            .is_none_or(|favorite| favorite.video != video.id || favorite.playlist != playlist.id)
+        {
             self.update_favorite_membership(None, cx);
         }
     }
 
     fn update_favorite_membership(&mut self, save: Option<bool>, cx: &mut Context<Self>) {
-        let Some(Dialog::SaveToPlaylist(video)) = &self.dialog else { return };
-        let Some(playlist) = self.yt_playlists.as_deref().and_then(account_favorites) else { return };
-        let Some(session) = self.yt_playlist_session.clone() else { return };
+        let Some(Dialog::SaveToPlaylist(video)) = &self.dialog else {
+            return;
+        };
+        let Some(playlist) = self.yt_playlists.as_deref().and_then(account_favorites) else {
+            return;
+        };
+        let Some(session) = self.yt_playlist_session.clone() else {
+            return;
+        };
         let (playlist, video) = (playlist.id.clone(), video.id.clone());
         let request = std::sync::Arc::new(());
         self.favorite_membership = Some(FavoriteMembership {
@@ -2733,18 +3429,36 @@ impl AppView {
         cx.spawn(async move |this, cx| {
             let (pid, vid, account) = (playlist.clone(), video.clone(), session.clone());
             let result = blocking(move || match save {
-                Some(saved) => auth::set_account_playlist_saved(&account, &pid, &vid, saved).map(|()| saved),
+                Some(saved) => {
+                    auth::set_account_playlist_saved(&account, &pid, &vid, saved).map(|()| saved)
+                }
                 None => auth::account_playlist_contains(&account, &pid, &vid),
-            }).await;
+            })
+            .await;
             let _ = this.update(cx, |a, cx| {
-                if !auth::is_current_session(&session) { return; }
-                let Some(favorite) = a.favorite_membership.as_mut().filter(|f| std::sync::Arc::ptr_eq(&f.request, &request)) else { return; };
+                if !auth::is_current_session(&session) {
+                    return;
+                }
+                let Some(favorite) = a
+                    .favorite_membership
+                    .as_mut()
+                    .filter(|f| std::sync::Arc::ptr_eq(&f.request, &request))
+                else {
+                    return;
+                };
                 favorite.pending = false;
                 match result {
                     Ok(saved) => {
                         favorite.contains = Some(saved);
                         if save.is_some() {
-                            toast(cx, t(if saved { "Added to YouTube Favorites" } else { "Removed from YouTube Favorites" }));
+                            toast(
+                                cx,
+                                t(if saved {
+                                    "Added to YouTube Favorites"
+                                } else {
+                                    "Removed from YouTube Favorites"
+                                }),
+                            );
                         }
                     }
                     Err(_) if save.is_some() => toast(cx, t("Couldn't update YouTube Favorites")),
@@ -2752,7 +3466,8 @@ impl AppView {
                 }
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
 
     /// The sidebar's lists, read from the database only after something was written
@@ -2764,7 +3479,10 @@ impl AppView {
             _ => {
                 let d = SidebarData {
                     key,
-                    playlists: store::playlists().into_iter().filter(|p| p.protected).collect(),
+                    playlists: store::playlists()
+                        .into_iter()
+                        .filter(|p| p.protected)
+                        .collect(),
                     subs: store::subscriptions(),
                 };
                 self.sidebar_cache = Some(d.clone());
@@ -2781,12 +3499,27 @@ impl AppView {
         let s = store::settings_snapshot();
         if !ui.sidebar_open && !is_watch {
             // compact rail
-            let rail = |id: &'static str, ic: &'static str, label: &'static str, r: Route, active: bool, cx: &mut Context<Self>| {
+            let rail = |id: &'static str,
+                        ic: &'static str,
+                        label: &'static str,
+                        r: Route,
+                        active: bool,
+                        cx: &mut Context<Self>| {
+                // The collapsed rail is icon-only. Arabic navigation names are
+                // multi-word, and a visible 10px label wrapped them into two
+                // visually reversed lines inside the 88px rail. The complete
+                // name remains in the accessible name and in a tooltip.
+                let name = SharedString::from(t(label).to_string());
                 div()
                     .id(id)
+                    .role(Role::Button)
+                    .accessibility_id(id)
+                    .aria_label(name.clone())
+                    .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
                     .flex()
                     .flex_col()
                     .items_center()
+                    .justify_center()
                     .gap_1p5()
                     .py_3p5()
                     .w_full()
@@ -2795,9 +3528,14 @@ impl AppView {
                     .cursor_pointer()
                     .when(active, |d| d.bg(p.chip))
                     .hover(move |s| s.bg(p.hover))
-                    .child(icon(ic).size_5().text_color(if active { p.accent } else { p.text }))
-                    .child(div().w_full().truncate().text_center().text_size(px(10.)).text_color(p.text).child(label))
-                    .on_click(cx.listener(move |this, _, window, cx| this.go(r.clone(), window, cx)))
+                    .child(
+                        icon(ic)
+                            .size_5()
+                            .text_color(if active { p.accent } else { p.text }),
+                    )
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.go(r.clone(), window, cx)),
+                    )
             };
             return div()
                 .flex()
@@ -2807,18 +3545,57 @@ impl AppView {
                 .w(px(COLLAPSED_SIDEBAR_WIDTH))
                 .px_1()
                 .pt_1()
-                .child(rail("r-home", "house", "Home", Route::Home, route == Route::Home, cx))
-                .when(!s.hide_shorts, |d| d.child(rail("r-shorts", "zap", "Shorts", Route::Shorts(None), matches!(route, Route::Shorts(_)), cx)))
-                .child(rail("r-subs", "tv", "Subscriptions", Route::Subscriptions, route == Route::Subscriptions, cx))
-                .child(rail("r-you", "circle-user", "You", Route::Library, route == Route::Library, cx))
-                .child(rail("r-dl", "download", "Downloads", Route::Downloads, route == Route::Downloads, cx))
+                .child(rail(
+                    "r-home",
+                    "house",
+                    "Home",
+                    Route::Home,
+                    route == Route::Home,
+                    cx,
+                ))
+                .when(!s.hide_shorts, |d| {
+                    d.child(rail(
+                        "r-shorts",
+                        "zap",
+                        "Shorts",
+                        Route::Shorts(None),
+                        matches!(route, Route::Shorts(_)),
+                        cx,
+                    ))
+                })
+                .child(rail(
+                    "r-subs",
+                    "tv",
+                    "Subscriptions",
+                    Route::Subscriptions,
+                    route == Route::Subscriptions,
+                    cx,
+                ))
+                .child(rail(
+                    "r-you",
+                    "circle-user",
+                    "You",
+                    Route::Library,
+                    route == Route::Library,
+                    cx,
+                ))
+                .child(rail(
+                    "r-dl",
+                    "download",
+                    "Downloads",
+                    Route::Downloads,
+                    route == Route::Downloads,
+                    cx,
+                ))
                 .into_any_element();
         }
         // one row: icon (or avatar) + label, YouTube-like density
-        let row = |id: SharedString, lead: AnyElement, label: String, active: bool| {
+        let row = |id: SharedString, lead: AnyElement, label: String, active: bool, cx: &App| {
             div()
                 .id(id)
-                .flex()
+                .role(Role::Button)
+                .aria_label(label.clone())
+                .flex_row_dir(cx)
                 .flex_none()
                 .items_center()
                 .gap_5()
@@ -2830,19 +3607,42 @@ impl AppView {
                 .text_color(p.text)
                 .when(active, |d| d.bg(p.chip).font_weight(FontWeight::MEDIUM))
                 .hover(move |s| s.bg(p.hover))
-                .child(div().flex().flex_none().items_center().justify_center().size(px(24.)).child(lead))
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .size(px(24.))
+                        .child(lead),
+                )
                 .child(div().flex_1().min_w_0().truncate().child(label))
         };
         let ic = |name: &str, active: bool| -> AnyElement {
-            icon(name).size_5().text_color(if active { p.accent } else { p.text }).into_any_element()
+            icon(name)
+                .size_5()
+                .text_color(if active { p.accent } else { p.text })
+                .into_any_element()
         };
-        let entry = |id: &'static str, name: &'static str, label: &str, r: Route, active: bool, cx: &mut Context<Self>| {
-            row(id.into(), ic(name, active), t(label).to_string(), active)
-                .on_click(cx.listener(move |this, _, window, cx| this.go(r.clone(), window, cx)))
+        let entry = |id: &'static str,
+                     name: &'static str,
+                     label: &str,
+                     r: Route,
+                     active: bool,
+                     cx: &mut Context<Self>| {
+            row(
+                id.into(),
+                ic(name, active),
+                t(label).to_string(),
+                active,
+                cx,
+            )
+            .accessibility_id(id)
+            .on_click(cx.listener(move |this, _, window, cx| this.go(r.clone(), window, cx)))
         };
-        let heading = |title: &str| {
+        let heading = |title: &str, cx: &App| {
             div()
-                .flex()
+                .flex_row_dir(cx)
                 .items_center()
                 .gap_1()
                 .px_3()
@@ -2866,18 +3666,71 @@ impl AppView {
             .pt_1()
             .pb_4()
             .overflow_y_scroll()
-            .child(entry("s-home", "house", "Home", Route::Home, route == Route::Home, cx))
-            .when(!s.hide_shorts, |d| d.child(entry("s-shorts", "zap", "Shorts", Route::Shorts(None), matches!(route, Route::Shorts(_)), cx)))
-            .child(entry("s-subs", "tv", "Subscriptions", Route::Subscriptions, route == Route::Subscriptions, cx))
+            .child(entry(
+                "s-home",
+                "house",
+                "Home",
+                Route::Home,
+                route == Route::Home,
+                cx,
+            ))
+            .when(!s.hide_shorts, |d| {
+                d.child(entry(
+                    "s-shorts",
+                    "zap",
+                    "Shorts",
+                    Route::Shorts(None),
+                    matches!(route, Route::Shorts(_)),
+                    cx,
+                ))
+            })
+            .child(entry(
+                "s-subs",
+                "tv",
+                "Subscriptions",
+                Route::Subscriptions,
+                route == Route::Subscriptions,
+                cx,
+            ))
             .child(sep())
             .child(
-                heading("You").id("s-you").cursor_pointer().rounded_lg().h(px(38.)).hover(move |s| s.bg(p.hover)).child(icon("chevron-right").size_4().text_color(p.text)).on_click(
-                    cx.listener(|this, _, window, cx| this.go(Route::Library, window, cx)),
-                ),
+                heading("You", cx)
+                    .id("s-you")
+                    .role(Role::Button)
+                    .accessibility_id("s-you")
+                    .aria_label(t("You"))
+                    .cursor_pointer()
+                    .rounded_lg()
+                    .h(px(38.))
+                    .hover(move |s| s.bg(p.hover))
+                    .child(
+                        icon(forward_chevron(LayoutDirection::global(cx)))
+                            .size_4()
+                            .text_color(p.text),
+                    )
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.go(Route::Library, window, cx)),
+                    ),
             )
-            .child(entry("s-hist", "history", "History", Route::History, route == Route::History, cx))
-            .child(entry("s-pl", "list-video", "Playlists", Route::Library, route == Route::Library, cx));
-        let SidebarData { playlists, subs, .. } = self.sidebar_data();
+            .child(entry(
+                "s-hist",
+                "history",
+                "History",
+                Route::History,
+                route == Route::History,
+                cx,
+            ))
+            .child(entry(
+                "s-pl",
+                "list-video",
+                "Playlists",
+                Route::Library,
+                route == Route::Library,
+                cx,
+            ));
+        let SidebarData {
+            playlists, subs, ..
+        } = self.sidebar_data();
         let account = self.yt_playlist_session.is_some();
         let favorites = self.yt_playlists.as_deref().and_then(account_favorites);
         for pl in playlists {
@@ -2885,31 +3738,55 @@ impl AppView {
             let name = if watch_later { "clock" } else { "bookmark" };
             let target = match (watch_later, account, favorites) {
                 (true, true, _) => Route::Playlist("WL".into()),
-                (false, true, Some(playlist)) if pl.name == "Favorites" => Route::Playlist(playlist.id.clone()),
+                (false, true, Some(playlist)) if pl.name == "Favorites" => {
+                    Route::Playlist(playlist.id.clone())
+                }
                 _ => Route::LocalPlaylist(pl.id),
             };
             let active = route == target;
             col = col.child(
-                row(SharedString::from(format!("s-lp-{}", pl.id)), ic(name, active), t(&pl.name).to_string(), active)
-                    .on_click(cx.listener(move |this, _, window, cx| this.go(target.clone(), window, cx))),
+                row(
+                    SharedString::from(format!("s-lp-{}", pl.id)),
+                    ic(name, active),
+                    t(&pl.name).to_string(),
+                    active,
+                    cx,
+                )
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.go(target.clone(), window, cx)),
+                ),
             );
         }
         if account {
             let liked = Route::Playlist("LL".into());
             let active = route == liked;
-            col = col.child(entry("s-account-liked", "thumbs-up", "Liked videos", liked, active, cx));
+            col = col.child(entry(
+                "s-account-liked",
+                "thumbs-up",
+                "Liked videos",
+                liked,
+                active,
+                cx,
+            ));
         }
-        col = col.child(entry("s-dl", "download", "Downloads", Route::Downloads, route == Route::Downloads, cx));
+        col = col.child(entry(
+            "s-dl",
+            "download",
+            "Downloads",
+            Route::Downloads,
+            route == Route::Downloads,
+            cx,
+        ));
 
         if !subs.is_empty() {
             const SHOWN: usize = 7;
             col = col.child(sep()).child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .items_center()
                     .justify_between()
-                    .pr_1()
-                    .child(heading("Subscriptions"))
+                    .pe(rems(0.25), cx)
+                    .child(heading("Subscriptions", cx))
                     .child(
                         div()
                             .id("s-manage")
@@ -2921,16 +3798,30 @@ impl AppView {
                             .cursor_pointer()
                             .hover(move |s| s.bg(p.hover).text_color(p.text))
                             .child(t("Manage"))
-                            .on_click(cx.listener(|this, _, window, cx| this.go(Route::Channels, window, cx))),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.go(Route::Channels, window, cx)
+                            })),
                     ),
             );
-            let n = if self.subs_expanded { subs.len() } else { subs.len().min(SHOWN) };
+            let n = if self.subs_expanded {
+                subs.len()
+            } else {
+                subs.len().min(SHOWN)
+            };
             for sub in subs.iter().take(n) {
                 let cid = sub.channel_id.clone();
                 let active = route == Route::Channel(cid.clone());
                 col = col.child(
-                    row(SharedString::from(format!("s-sub-{}", sub.channel_id)), avatar(sub.avatar.as_deref(), px(24.), &sub.name, cx), sub.name.clone(), active)
-                        .on_click(cx.listener(move |this, _, window, cx| this.go(Route::Channel(cid.clone()), window, cx))),
+                    row(
+                        SharedString::from(format!("s-sub-{}", sub.channel_id)),
+                        avatar(sub.avatar.as_deref(), px(24.), &sub.name, cx),
+                        sub.name.clone(),
+                        active,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.go(Route::Channel(cid.clone()), window, cx)
+                    })),
                 );
             }
             if subs.len() > SHOWN {
@@ -2938,9 +3829,21 @@ impl AppView {
                 col = col.child(
                     row(
                         "s-subs-more".into(),
-                        icon(if expanded { "chevron-up" } else { "chevron-down" }).size_5().text_color(p.text).into_any_element(),
-                        if expanded { t("Show fewer").into() } else { tf!("Show {0} more", subs.len() - SHOWN) },
+                        icon(if expanded {
+                            "chevron-up"
+                        } else {
+                            "chevron-down"
+                        })
+                        .size_5()
+                        .text_color(p.text)
+                        .into_any_element(),
+                        if expanded {
+                            t("Show fewer").into()
+                        } else {
+                            tf!("Show {0} more", subs.len() - SHOWN)
+                        },
                         false,
+                        cx,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.subs_expanded ^= true;
@@ -2950,19 +3853,41 @@ impl AppView {
             }
         }
         if !s.hide_explore {
-            col = col.child(sep()).child(heading("Explore"));
-            let icons = ["music", "gamepad-2", "newspaper", "trophy", "radio", "shirt", "lightbulb"];
+            col = col.child(sep()).child(heading("Explore", cx));
+            let icons = [
+                "music",
+                "gamepad-2",
+                "newspaper",
+                "trophy",
+                "radio",
+                "shirt",
+                "lightbulb",
+            ];
             for (i, (name, _)) in innertube::EXPLORE.iter().enumerate() {
                 let active = route == Route::Explore(i);
                 col = col.child(
-                    row(SharedString::from(format!("s-ex-{i}")), ic(icons.get(i).copied().unwrap_or("compass"), active), t(name).to_string(), active)
-                        .on_click(cx.listener(move |this, _, window, cx| this.go(Route::Explore(i), window, cx))),
+                    row(
+                        SharedString::from(format!("s-ex-{i}")),
+                        ic(icons.get(i).copied().unwrap_or("compass"), active),
+                        t(name).to_string(),
+                        active,
+                        cx,
+                    )
+                    .accessibility_id(SharedString::from(format!("explore-{i}")))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.go(Route::Explore(i), window, cx)
+                    })),
                 );
             }
         }
-        col = col
-            .child(sep())
-            .child(entry("s-set", "settings", "Settings", Route::Settings, route == Route::Settings, cx));
+        col = col.child(sep()).child(entry(
+            "s-set",
+            "settings",
+            "Settings",
+            Route::Settings,
+            route == Route::Settings,
+            cx,
+        ));
         col.into_any_element()
     }
 
@@ -2980,13 +3905,13 @@ impl AppView {
                 .right_0()
                 .bottom_0()
                 .top(px(56.))
-                .flex()
+                .flex_row_dir(cx)
                 .child(
                     div()
                         .id("drawer")
                         .h_full()
                         .bg(p.bg)
-                        .border_r_1()
+                        .border_e(px(1.), cx)
                         .border_color(p.border)
                         .shadow_2xl()
                         .occlude()
@@ -3026,7 +3951,14 @@ impl AppView {
             cx.listener(move |this: &mut Self, ev: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
                 let (right, bottom, w) = this.mini_geom;
-                this.mini_drag = Some(MiniDrag { resize, start: ev.position, right, bottom, w, moved: false });
+                this.mini_drag = Some(MiniDrag {
+                    resize,
+                    start: ev.position,
+                    right,
+                    bottom,
+                    w,
+                    moved: false,
+                });
                 cx.notify();
             })
         };
@@ -3043,7 +3975,9 @@ impl AppView {
                 .border_1()
                 .border_color(p.border)
                 // the video itself is drawn over this slot by `Shell`
-                .child(div().w_full().h(px(h)).child(crate::ui::slot::slot_canvas(cx.global::<crate::ui::slot::MiniSlot>().0.clone())))
+                .child(div().w_full().h(px(h)).child(crate::ui::slot::slot_canvas(
+                    cx.global::<crate::ui::slot::MiniSlot>().0.clone(),
+                )))
                 .child(
                     div()
                         .id("mini-info")
@@ -3058,21 +3992,68 @@ impl AppView {
                             if std::mem::take(&mut this.mini_dragged) {
                                 return;
                             }
-                            let route = if is_short && !store::settings_snapshot().shorts_in_player {
+                            let route = if is_short && !store::settings_snapshot().shorts_in_player
+                            {
                                 Route::Shorts(Some(id.clone()))
                             } else {
-                                Route::Watch { id: id.clone(), playlist: None, start: None }
+                                Route::Watch {
+                                    id: id.clone(),
+                                    playlist: None,
+                                    start: None,
+                                }
                             };
                             this.go(route, window, cx)
                         }))
-                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(p.text).truncate().child(video.title.clone()))
-                        .child(div().text_xs().text_color(p.text2).truncate().child(video.channel_name.clone())),
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(p.text)
+                                .truncate()
+                                .child(video.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(p.text2)
+                                .truncate()
+                                .child(video.channel_name.clone()),
+                        ),
                 )
                 // resize from the top and left edges (the player is anchored bottom-right);
                 // thin strips, so the player's own buttons stay clickable
-                .child(deferred(div().id("mini-resize-top").absolute().top_0().left_0().right_0().h(px(6.)).cursor(CursorStyle::ResizeUpDown).on_mouse_down(MouseButton::Left, start(true))))
-                .child(deferred(div().id("mini-resize-left").absolute().top_0().left_0().bottom_0().w(px(6.)).cursor(CursorStyle::ResizeLeftRight).on_mouse_down(MouseButton::Left, start(true))))
-                .child(deferred(div().id("mini-resize-corner").absolute().top_0().left_0().size(px(12.)).cursor(CursorStyle::ResizeUpLeftDownRight).on_mouse_down(MouseButton::Left, start(true))))
+                .child(deferred(
+                    div()
+                        .id("mini-resize-top")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(6.))
+                        .cursor(CursorStyle::ResizeUpDown)
+                        .on_mouse_down(MouseButton::Left, start(true)),
+                ))
+                .child(deferred(
+                    div()
+                        .id("mini-resize-left")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .bottom_0()
+                        .w(px(6.))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .on_mouse_down(MouseButton::Left, start(true)),
+                ))
+                .child(deferred(
+                    div()
+                        .id("mini-resize-corner")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size(px(12.))
+                        .cursor(CursorStyle::ResizeUpLeftDownRight)
+                        .on_mouse_down(MouseButton::Left, start(true)),
+                ))
                 .into_any_element(),
         )
     }
@@ -3083,40 +4064,60 @@ impl AppView {
         self.mini_drag.as_ref()?;
         Some(
             // deferred: above the mini player's video, which `Shell` draws over this view
-            deferred(div()
-                .id("mini-drag")
-                .absolute()
-                .inset_0()
-                .occlude()
-                .cursor(if self.mini_drag.as_ref().is_some_and(|d| d.resize) { CursorStyle::ResizeUpLeftDownRight } else { CursorStyle::ClosedHand })
-                .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
-                    let Some(d) = this.mini_drag.as_mut() else { return };
-                    if ev.pressed_button != Some(MouseButton::Left) {
-                        this.end_mini_drag(cx);
-                        return;
-                    }
-                    let dx: f32 = (ev.position.x - d.start.x).into();
-                    let dy: f32 = (ev.position.y - d.start.y).into();
-                    if dx.abs() + dy.abs() > 4.0 {
-                        d.moved = true;
-                    }
-                    let vp = window.viewport_size();
-                    let (vw, vh): (f32, f32) = (vp.width.into(), vp.height.into());
-                    let (right, bottom, w) = if d.resize {
-                        // the edge moved furthest decides (the top edge in width units)
-                        let delta = if dx.abs() >= (dy * 16.0 / 9.0).abs() { dx } else { dy * 16.0 / 9.0 };
-                        let w = (d.w - delta).clamp(MINI_MIN_W, (vw - d.right - 8.0).max(MINI_MIN_W).min(MINI_MAX_W));
-                        (d.right, d.bottom, w)
+            deferred(
+                div()
+                    .id("mini-drag")
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .cursor(if self.mini_drag.as_ref().is_some_and(|d| d.resize) {
+                        CursorStyle::ResizeUpLeftDownRight
                     } else {
-                        (d.right - dx, d.bottom - dy, d.w)
-                    };
-                    this.mini_geom = clamp_mini((right, bottom, w), vw, vh);
-                    cx.notify();
-                }))
-                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.end_mini_drag(cx)))
-                .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.end_mini_drag(cx)))
-                )
-                .into_any_element(),
+                        CursorStyle::ClosedHand
+                    })
+                    .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                        let Some(d) = this.mini_drag.as_mut() else {
+                            return;
+                        };
+                        if ev.pressed_button != Some(MouseButton::Left) {
+                            this.end_mini_drag(cx);
+                            return;
+                        }
+                        let dx: f32 = (ev.position.x - d.start.x).into();
+                        let dy: f32 = (ev.position.y - d.start.y).into();
+                        if dx.abs() + dy.abs() > 4.0 {
+                            d.moved = true;
+                        }
+                        let vp = window.viewport_size();
+                        let (vw, vh): (f32, f32) = (vp.width.into(), vp.height.into());
+                        let (right, bottom, w) = if d.resize {
+                            // the edge moved furthest decides (the top edge in width units)
+                            let delta = if dx.abs() >= (dy * 16.0 / 9.0).abs() {
+                                dx
+                            } else {
+                                dy * 16.0 / 9.0
+                            };
+                            let w = (d.w - delta).clamp(
+                                MINI_MIN_W,
+                                (vw - d.right - 8.0).max(MINI_MIN_W).min(MINI_MAX_W),
+                            );
+                            (d.right, d.bottom, w)
+                        } else {
+                            (d.right - dx, d.bottom - dy, d.w)
+                        };
+                        this.mini_geom = clamp_mini((right, bottom, w), vw, vh);
+                        cx.notify();
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.end_mini_drag(cx)),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.end_mini_drag(cx)),
+                    ),
+            )
+            .into_any_element(),
         )
     }
 
@@ -3139,7 +4140,7 @@ impl AppView {
                     let act = it.action.clone();
                     div()
                         .id(SharedString::from(format!("mi-{i}")))
-                        .flex()
+                        .flex_row_dir(cx)
                         .items_center()
                         .gap_4()
                         .px_4()
@@ -3160,23 +4161,31 @@ impl AppView {
         };
         Some(
             deferred(
-                anchored().position(pos).snap_to_window_with_margin(px(8.)).child(
-                    div()
-                        .id("ctx-menu")
-                        .occlude()
-                        .min_w(px(240.))
-                        .py_2()
-                        .rounded_xl()
-                        .bg(p.surface2)
-                        .border_1()
-                        .border_color(p.border)
-                        .shadow_xl()
-                        .on_mouse_down_out(|_, _, cx| {
-                            cx.set_global(OpenMenu(None));
-                            cx.refresh_windows();
-                        })
-                        .child(body),
-                ),
+                anchored()
+                    .anchor(if LayoutDirection::global(cx).is_rtl() {
+                        Anchor::TopRight
+                    } else {
+                        Anchor::TopLeft
+                    })
+                    .position(pos)
+                    .snap_to_window_with_margin(px(8.))
+                    .child(
+                        div()
+                            .id("ctx-menu")
+                            .occlude()
+                            .min_w(px(240.))
+                            .py_2()
+                            .rounded_xl()
+                            .bg(p.surface2)
+                            .border_1()
+                            .border_color(p.border)
+                            .shadow_xl()
+                            .on_mouse_down_out(|_, _, cx| {
+                                cx.set_global(OpenMenu(None));
+                                cx.refresh_windows();
+                            })
+                            .child(body),
+                    ),
             )
             .with_priority(3)
             .into_any_element(),
@@ -3186,25 +4195,47 @@ impl AppView {
     fn render_update(&mut self, cx: &mut Context<Self>) -> AnyElement {
         use crate::updater::Status;
         let p = pal(cx);
-        let Some(status) = cx.try_global::<crate::updater::Updates>().map(|u| u.status.clone()) else {
+        let Some(status) = cx
+            .try_global::<crate::updater::Updates>()
+            .map(|u| u.status.clone())
+        else {
             return div().into_any_element();
         };
         let (rel, progress) = match status {
             Status::Available(r) => (r, None),
             Status::Downloading(r, f) => (r, Some(f)),
             _ => {
-                return div().p_5().text_sm().text_color(p.text2).child(t("No update available")).into_any_element();
+                return div()
+                    .p_5()
+                    .text_sm()
+                    .text_color(p.text2)
+                    .child(t("No update available"))
+                    .into_any_element();
             }
         };
         // release notes are Markdown; long ones are cut at a line break
         let mut notes = strip_download_section(&rel.notes.replace("\r\n", "\n"));
         if notes.chars().count() > 1400 {
             let cut: String = notes.chars().take(1400).collect();
-            notes = cut.rsplit_once('\n').map(|(a, _)| a.to_string()).unwrap_or(cut) + "\n\n…";
+            notes = cut
+                .rsplit_once('\n')
+                .map(|(a, _)| a.to_string())
+                .unwrap_or(cut)
+                + "\n\n…";
         }
         let has_installer = cfg!(windows) && rel.asset.is_some();
-        let size = rel.asset.as_ref().map(|a| a.size).filter(|s| *s > 0).map(|s| format!("{:.0} MB", s as f64 / 1_048_576.0));
-        let version = rel.name.trim_start_matches("Stream Tube").trim().trim_start_matches('v').to_string();
+        let size = rel
+            .asset
+            .as_ref()
+            .map(|a| a.size)
+            .filter(|s| *s > 0)
+            .map(|s| format!("{:.0} MB", s as f64 / 1_048_576.0));
+        let version = rel
+            .name
+            .trim_start_matches("Stream Tube")
+            .trim()
+            .trim_start_matches('v')
+            .to_string();
         let accent = crate::ui::app_icon::icon_accent(store::settings_snapshot().accent);
         let [c0, _, c2] = crate::ui::app_icon::accent_stops(accent);
         let mut meta = vec![tf!("You have {0}", crate::updater::current_version())];
@@ -3226,10 +4257,30 @@ impl AppView {
             .pb_6()
             .px_6()
             .overflow_hidden()
-            .bg(linear_gradient(135., linear_color_stop(rgb(c0), 0.), linear_color_stop(rgb(c2), 1.)))
+            .bg(linear_gradient(
+                135.,
+                linear_color_stop(rgb(c0), 0.),
+                linear_color_stop(rgb(c2), 1.),
+            ))
             // soft light spots
-            .child(div().absolute().top(px(-60.)).left(px(-40.)).size(px(180.)).rounded_full().bg(hsla(0., 0., 1., 0.12)))
-            .child(div().absolute().bottom(px(-80.)).right(px(-30.)).size(px(220.)).rounded_full().bg(hsla(0., 0., 0., 0.12)))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-60.))
+                    .left(px(-40.))
+                    .size(px(180.))
+                    .rounded_full()
+                    .bg(hsla(0., 0., 1., 0.12)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(-80.))
+                    .right(px(-30.))
+                    .size(px(220.))
+                    .rounded_full()
+                    .bg(hsla(0., 0., 0., 0.12)),
+            )
             .child(
                 div()
                     .relative()
@@ -3238,11 +4289,18 @@ impl AppView {
                     .items_center()
                     .justify_center()
                     .child(
-                        div().absolute().inset_0().rounded_full().bg(hsla(0., 0., 1., 0.25)).with_animation(
-                            "upd-glow",
-                            Animation::new(std::time::Duration::from_millis(1800)).repeat().with_easing(pulsating_between(0.0, 1.0)),
-                            |d, t| d.opacity(0.25 + 0.55 * t),
-                        ),
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded_full()
+                            .bg(hsla(0., 0., 1., 0.25))
+                            .with_animation(
+                                "upd-glow",
+                                Animation::new(std::time::Duration::from_millis(1800))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.0, 1.0)),
+                                |d, t| d.opacity(0.25 + 0.55 * t),
+                            ),
                     )
                     .child(crate::ui::logo(px(64.))),
             )
@@ -3262,24 +4320,46 @@ impl AppView {
                     .child(icon("sparkles").size_3p5().text_color(white()))
                     .child(t("New version")),
             )
-            .child(div().text_3xl().font_weight(FontWeight::BOLD).text_color(white()).child(format!("Stream Tube {version}")))
-            .child(div().text_sm().text_color(hsla(0., 0., 1., 0.85)).child(meta.join(", ")));
+            .child(
+                div()
+                    .text_3xl()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(white())
+                    .child(format!("Stream Tube {version}")),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(hsla(0., 0., 1., 0.85))
+                    .child(meta.join(", ")),
+            );
 
         let mut body = div().flex().flex_col().gap_4().p_6();
         if !notes.trim().is_empty() {
-            body = body.child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(p.text2).child(t("WHAT'S NEW"))).child(
-                div()
-                    .id("upd-notes")
-                    .when(notes.len() > 280, |d| d.h(px(230.)))
-                    .flex_none()
-                    .overflow_y_scroll()
-                    .pr_2()
-                    .text_sm()
-                    .text_color(p.text)
-                    .child(gpui_kit::base::TextView::markdown("upd-notes-md", notes).on_link_click(|url, _, _, _| {
-                        open_web(url.as_ref());
-                    })),
-            );
+            body = body
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.text2)
+                        .child(t("WHAT'S NEW")),
+                )
+                .child(
+                    div()
+                        .id("upd-notes")
+                        .when(notes.len() > 280, |d| d.h(px(230.)))
+                        .flex_none()
+                        .overflow_y_scroll()
+                        .pr_2()
+                        .text_sm()
+                        .text_color(p.text)
+                        .child(
+                            gpui_kit::base::TextView::markdown("upd-notes-md", notes)
+                                .on_link_click(|url, _, _, _| {
+                                    open_web(url.as_ref());
+                                }),
+                        ),
+                );
         }
         if let Some(f) = progress {
             let f = f.clamp(0.0, 1.0);
@@ -3293,36 +4373,78 @@ impl AppView {
                             .flex()
                             .justify_between()
                             .text_sm()
-                            .child(div().text_color(p.text).font_weight(FontWeight::MEDIUM).child(if f >= 0.999 { t("Installing…") } else { t("Downloading…") }))
-                            .child(div().text_color(p.text2).child(format!("{:.0}%", f * 100.0))),
+                            .child(
+                                div()
+                                    .text_color(p.text)
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(if f >= 0.999 {
+                                        t("Installing…")
+                                    } else {
+                                        t("Downloading…")
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_color(p.text2)
+                                    .child(format!("{:.0}%", f * 100.0)),
+                            ),
                     )
                     .child(
-                        div().relative().w_full().h(px(8.)).rounded_full().overflow_hidden().bg(p.hover).child(
-                            div()
-                                .relative()
-                                .h_full()
-                                .rounded_full()
-                                .w(relative(f.max(0.02)))
-                                .bg(linear_gradient(90., linear_color_stop(rgb(c0), 0.), linear_color_stop(rgb(c2), 1.)))
-                                .overflow_hidden()
-                                // moving shine
-                                .child(
-                                    div().absolute().top_0().bottom_0().w(px(60.)).bg(linear_gradient(
+                        div()
+                            .relative()
+                            .w_full()
+                            .h(px(8.))
+                            .rounded_full()
+                            .overflow_hidden()
+                            .bg(p.hover)
+                            .child(
+                                div()
+                                    .relative()
+                                    .h_full()
+                                    .rounded_full()
+                                    .w(relative(f.max(0.02)))
+                                    .bg(linear_gradient(
                                         90.,
-                                        linear_color_stop(hsla(0., 0., 1., 0.), 0.),
-                                        linear_color_stop(hsla(0., 0., 1., 0.45), 1.),
+                                        linear_color_stop(rgb(c0), 0.),
+                                        linear_color_stop(rgb(c2), 1.),
                                     ))
-                                    .with_animation(
-                                        "upd-shine",
-                                        Animation::new(std::time::Duration::from_millis(1200)).repeat(),
-                                        |d, t| d.left(relative(-0.3 + 1.3 * t)),
+                                    .overflow_hidden()
+                                    // moving shine
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .bottom_0()
+                                            .w(px(60.))
+                                            .bg(linear_gradient(
+                                                90.,
+                                                linear_color_stop(hsla(0., 0., 1., 0.), 0.),
+                                                linear_color_stop(hsla(0., 0., 1., 0.45), 1.),
+                                            ))
+                                            .with_animation(
+                                                "upd-shine",
+                                                Animation::new(std::time::Duration::from_millis(
+                                                    1200,
+                                                ))
+                                                .repeat(),
+                                                |d, t| d.left(relative(-0.3 + 1.3 * t)),
+                                            ),
                                     ),
-                                ),
-                        ),
+                            ),
                     )
-                    .child(div().text_xs().text_color(p.text2).child(t("Stream Tube restarts by itself when it's done."))),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(p.text2)
+                            .child(t("Stream Tube restarts by itself when it's done.")),
+                    ),
             );
-            return div().flex().flex_col().child(hero).child(body).into_any_element();
+            return div()
+                .flex()
+                .flex_col()
+                .child(hero)
+                .child(body)
+                .into_any_element();
         }
         body = body.child(
             div()
@@ -3336,15 +4458,29 @@ impl AppView {
                         .gap_4()
                         .text_sm()
                         .text_color(p.text2)
-                        .child(div().id("upd-skip").cursor_pointer().hover(|s| s.text_color(p.text)).child(t("Skip this version")).on_click(cx.listener(|this, _, _, cx| {
-                            crate::updater::skip(cx);
-                            this.dialog = None;
-                            cx.notify();
-                        })))
-                        .child(div().id("upd-later").cursor_pointer().hover(|s| s.text_color(p.text)).child(t("Later")).on_click(cx.listener(|this, _, _, cx| {
-                            this.dialog = None;
-                            cx.notify();
-                        }))),
+                        .child(
+                            div()
+                                .id("upd-skip")
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(p.text))
+                                .child(t("Skip this version"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    crate::updater::skip(cx);
+                                    this.dialog = None;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            div()
+                                .id("upd-later")
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(p.text))
+                                .child(t("Later"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.dialog = None;
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .child(
                     div()
@@ -3356,14 +4492,30 @@ impl AppView {
                         .px_6()
                         .rounded_full()
                         .cursor_pointer()
-                        .bg(linear_gradient(90., linear_color_stop(rgb(c0), 0.), linear_color_stop(rgb(c2), 1.)))
+                        .bg(linear_gradient(
+                            90.,
+                            linear_color_stop(rgb(c0), 0.),
+                            linear_color_stop(rgb(c2), 1.),
+                        ))
                         .shadow_lg()
                         .hover(|s| s.opacity(0.92))
                         .active(|s| s.opacity(0.8))
                         .text_color(white())
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(icon(if has_installer { "download" } else { "external-link" }).size_4().text_color(white()))
-                        .child(if has_installer { t("Update now") } else { t("Download") })
+                        .child(
+                            icon(if has_installer {
+                                "download"
+                            } else {
+                                "external-link"
+                            })
+                            .size_4()
+                            .text_color(white()),
+                        )
+                        .child(if has_installer {
+                            t("Update now")
+                        } else {
+                            t("Download")
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if !has_installer {
                                 this.dialog = None;
@@ -3373,7 +4525,12 @@ impl AppView {
                         })),
                 ),
         );
-        div().flex().flex_col().child(hero).child(body).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .child(hero)
+            .child(body)
+            .into_any_element()
     }
 
     fn render_dialog(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -3391,13 +4548,20 @@ impl AppView {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(p.text).pb_2().child(t("Save video to…")))
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.text)
+                            .pb_2()
+                            .child(t("Save video to…")),
+                    )
                     .children(pls.into_iter().map(|pl| {
                         let contains = store::playlist_contains(pl.id, &v.id);
                         let v2 = v.clone();
                         div()
                             .id(SharedString::from(format!("dlg-pl-{}", pl.id)))
-                            .flex()
+                            .flex_row_dir(cx)
                             .items_center()
                             .gap_3()
                             .py_2()
@@ -3405,9 +4569,22 @@ impl AppView {
                             .rounded_md()
                             .cursor_pointer()
                             .hover(move |s| s.bg(p.hover))
-                            .child(icon(if contains { "square-check" } else { "square" }).text_color(p.text))
-                            .child(div().flex_1().text_sm().text_color(p.text).child(if pl.protected { t(&pl.name).to_string() } else { pl.name.clone() }))
-                            .child(icon(if pl.protected { "lock" } else { "globe-lock" }).size_4().text_color(p.text3))
+                            .child(
+                                icon(if contains { "square-check" } else { "square" })
+                                    .text_color(p.text),
+                            )
+                            .child(div().flex_1().text_sm().text_color(p.text).child(
+                                if pl.protected {
+                                    t(&pl.name).to_string()
+                                } else {
+                                    pl.name.clone()
+                                },
+                            ))
+                            .child(
+                                icon(if pl.protected { "lock" } else { "globe-lock" })
+                                    .size_4()
+                                    .text_color(p.text3),
+                            )
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 if store::playlist_contains(pl.id, &v2.id) {
                                     store::playlist_remove(pl.id, &v2.id);
@@ -3422,15 +4599,27 @@ impl AppView {
                     .when(crate::api::auth::signed_in(), |d| {
                         let favorite = self.yt_playlists.as_deref().and_then(account_favorites);
                         let rows: Vec<AnyElement> = match &self.yt_playlists {
-                            None => vec![div().py_2().px_2().text_sm().text_color(p.text2).child(t("Loading your YouTube playlists…")).into_any_element()],
+                            None => vec![
+                                div()
+                                    .py_2()
+                                    .px_2()
+                                    .text_sm()
+                                    .text_color(p.text2)
+                                    .child(t("Loading your YouTube playlists…"))
+                                    .into_any_element(),
+                            ],
                             Some(list) => list
                                 .iter()
-                                .filter(|pl| pl.id != "LL" && favorite.is_none_or(|favorite| pl.id != favorite.id))
+                                .filter(|pl| {
+                                    pl.id != "LL"
+                                        && favorite.is_none_or(|favorite| pl.id != favorite.id)
+                                })
                                 .map(|pl| {
-                                    let (pid, name, vid) = (pl.id.clone(), pl.title.clone(), v.id.clone());
+                                    let (pid, name, vid) =
+                                        (pl.id.clone(), pl.title.clone(), v.id.clone());
                                     div()
                                         .id(SharedString::from(format!("dlg-yt-{}", pl.id)))
-                                        .flex()
+                                        .flex_row_dir(cx)
                                         .items_center()
                                         .gap_3()
                                         .py_2()
@@ -3439,15 +4628,32 @@ impl AppView {
                                         .cursor_pointer()
                                         .hover(move |s| s.bg(p.hover))
                                         .child(icon("list-plus").text_color(p.text))
-                                        .child(div().flex_1().text_sm().text_color(p.text).truncate().child(pl.title.clone()))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .text_sm()
+                                                .text_color(p.text)
+                                                .truncate()
+                                                .child(pl.title.clone()),
+                                        )
                                         .child(icon("list-video").size_4().text_color(p.text3))
                                         .on_click(cx.listener(move |_, _, _, cx| {
-                                            let (pid, name, vid) = (pid.clone(), name.clone(), vid.clone());
+                                            let (pid, name, vid) =
+                                                (pid.clone(), name.clone(), vid.clone());
                                             cx.spawn(async move |_, cx| {
-                                                let res = blocking(move || crate::api::auth::add_to_playlist(&pid, &vid)).await;
+                                                let res = blocking(move || {
+                                                    crate::api::auth::add_to_playlist(&pid, &vid)
+                                                })
+                                                .await;
                                                 cx.update(|cx| match res {
-                                                    Ok(()) => toast(cx, tf!("Saved to playlist “{0}”", name)),
-                                                    Err(_) => toast(cx, t("Couldn't save to that YouTube playlist")),
+                                                    Ok(()) => toast(
+                                                        cx,
+                                                        tf!("Saved to playlist “{0}”", name),
+                                                    ),
+                                                    Err(_) => toast(
+                                                        cx,
+                                                        t("Couldn't save to that YouTube playlist"),
+                                                    ),
                                                 });
                                             })
                                             .detach();
@@ -3456,30 +4662,67 @@ impl AppView {
                                 })
                                 .collect(),
                         };
-                        d.child(div().pt_3().pb_1().px_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(p.text2).child(t("Your YouTube playlists")))
-                            .when_some(self.favorite_membership.as_ref().filter(|f| f.video == v.id), |d, favorite| {
+                        d.child(
+                            div()
+                                .pt_3()
+                                .pb_1()
+                                .px_2()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(p.text2)
+                                .child(t("Your YouTube playlists")),
+                        )
+                        .when_some(
+                            self.favorite_membership
+                                .as_ref()
+                                .filter(|f| f.video == v.id),
+                            |d, favorite| {
                                 let pending = favorite.pending;
                                 let contains = favorite.contains;
-                                d.child(div()
-                                    .id("dlg-account-favorites")
-                                    .flex().items_center().gap_3().py_2().px_2().rounded_md()
-                                    .child(icon(match (pending, contains) {
-                                        (true, _) => "loader",
-                                        (false, Some(true)) => "square-check",
-                                        (false, Some(false)) => "square",
-                                        (false, None) => "refresh-cw",
-                                    }).text_color(p.text))
-                                    .child(div().flex_1().text_sm().text_color(p.text).child(t("Favorites")))
-                                    .when(!pending, |row| row.cursor_pointer().hover(move |s| s.bg(p.hover)).on_click(
-                                        cx.listener(move |a, _, _, cx| a.update_favorite_membership(contains.map(|saved| !saved), cx)),
-                                    )))
-                            })
-                            .children(rows)
+                                d.child(
+                                    div()
+                                        .id("dlg-account-favorites")
+                                        .flex_row_dir(cx)
+                                        .items_center()
+                                        .gap_3()
+                                        .py_2()
+                                        .px_2()
+                                        .rounded_md()
+                                        .child(
+                                            icon(match (pending, contains) {
+                                                (true, _) => "loader",
+                                                (false, Some(true)) => "square-check",
+                                                (false, Some(false)) => "square",
+                                                (false, None) => "refresh-cw",
+                                            })
+                                            .text_color(p.text),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .text_sm()
+                                                .text_color(p.text)
+                                                .child(t("Favorites")),
+                                        )
+                                        .when(!pending, |row| {
+                                            row.cursor_pointer()
+                                                .hover(move |s| s.bg(p.hover))
+                                                .on_click(cx.listener(move |a, _, _, cx| {
+                                                    a.update_favorite_membership(
+                                                        contains.map(|saved| !saved),
+                                                        cx,
+                                                    )
+                                                }))
+                                        }),
+                                )
+                            },
+                        )
+                        .children(rows)
                     })
                     .child(
                         div()
                             .id("dlg-new")
-                            .flex()
+                            .flex_row_dir(cx)
                             .items_center()
                             .gap_3()
                             .mt_2()
@@ -3489,7 +4732,12 @@ impl AppView {
                             .cursor_pointer()
                             .hover(move |s| s.bg(p.hover))
                             .child(icon("plus").text_color(p.text))
-                            .child(div().text_sm().text_color(p.text).child(t("Create new playlist")))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(p.text)
+                                    .child(t("Create new playlist")),
+                            )
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 let v3 = v.clone();
                                 this.dialog = None;
@@ -3498,11 +4746,17 @@ impl AppView {
                                 // window.defer, not defer_in: prompt_text updates this same
                                 // AppView, which defer_in would still be holding (a crash)
                                 window.defer(cx, move |window, cx| {
-                                    prompt_text("New playlist", "Playlist name", window, cx, move |name, _, cx| {
-                                        let id = store::playlist_create(&name);
-                                        store::playlist_add(id, &v4);
-                                        toast(cx, tf!("Saved to playlist “{0}”", name));
-                                    });
+                                    prompt_text(
+                                        "New playlist",
+                                        "Playlist name",
+                                        window,
+                                        cx,
+                                        move |name, _, cx| {
+                                            let id = store::playlist_create(&name);
+                                            store::playlist_add(id, &v4);
+                                            toast(cx, tf!("Saved to playlist “{0}”", name));
+                                        },
+                                    );
                                 });
                             })),
                     )
@@ -3512,44 +4766,96 @@ impl AppView {
                 .flex()
                 .flex_col()
                 .gap_4()
-                .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(t(title).to_string()))
-                .child(div().border_b_1().border_color(p.text2).pb_1().child(Input::new(&self.dialog_input).appearance(false)))
                 .child(
-                    div().flex().justify_end().gap_2().child(pill("dlg-cancel", None, "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
-                        this.dialog = None;
-                        cx.notify();
-                    }))).child(
-                        pill("dlg-ok", None, "Create", cx).bg(p.link).text_color(white()).on_click(cx.listener(|this, _, window, cx| {
-                            let v = this.dialog_input.read(cx).value().to_string();
-                            if let Some(Dialog::TextPrompt { on_submit, .. }) = this.dialog.take() {
-                                if !v.trim().is_empty() {
-                                    on_submit(v.trim().to_string(), window, cx);
-                                }
-                            }
-                            cx.notify();
-                        })),
-                    ),
+                    div()
+                        .text_base()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.text)
+                        .child(t(title).to_string()),
+                )
+                .child(
+                    div()
+                        .border_b_1()
+                        .border_color(p.text2)
+                        .pb_1()
+                        .child(Input::new(&self.dialog_input).appearance(false)),
+                )
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .justify_flex_end()
+                        .gap_2()
+                        .child(pill("dlg-cancel", None, "Cancel", cx).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.dialog = None;
+                                cx.notify();
+                            },
+                        )))
+                        .child(
+                            pill("dlg-ok", None, "Create", cx)
+                                .bg(p.link)
+                                .text_color(white())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let v = this.dialog_input.read(cx).value().to_string();
+                                    if let Some(Dialog::TextPrompt { on_submit, .. }) =
+                                        this.dialog.take()
+                                    {
+                                        if !v.trim().is_empty() {
+                                            on_submit(v.trim().to_string(), window, cx);
+                                        }
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .into_any_element(),
             Dialog::Update => self.render_update(cx),
-            Dialog::Confirm { title, body, confirm, .. } => div()
+            Dialog::Confirm {
+                title,
+                body,
+                confirm,
+                ..
+            } => div()
                 .flex()
                 .flex_col()
                 .gap_4()
-                .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(t(title).to_string()))
-                .child(div().text_sm().text_color(p.text2).child(t(body).to_string()))
                 .child(
-                    div().flex().justify_end().gap_2().child(pill("dlg-cancel", None, "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
-                        this.dialog = None;
-                        cx.notify();
-                    }))).child(
-                        pill("dlg-ok", None, confirm.clone(), cx).bg(rgb(0xcc0000)).text_color(white()).on_click(cx.listener(|this, _, window, cx| {
-                            if let Some(Dialog::Confirm { on_confirm, .. }) = this.dialog.take() {
-                                on_confirm(window, cx);
-                            }
-                            cx.notify();
-                        })),
-                    ),
+                    div()
+                        .text_base()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.text)
+                        .child(t(title).to_string()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(p.text2)
+                        .child(rtl_prose(t(body), cx)),
+                )
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .justify_flex_end()
+                        .gap_2()
+                        .child(pill("dlg-cancel", None, "Cancel", cx).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.dialog = None;
+                                cx.notify();
+                            },
+                        )))
+                        .child(
+                            pill("dlg-ok", None, confirm.clone(), cx)
+                                .bg(rgb(0xcc0000))
+                                .text_color(white())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if let Some(Dialog::Confirm { on_confirm, .. }) =
+                                        this.dialog.take()
+                                    {
+                                        on_confirm(window, cx);
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .into_any_element(),
         };
@@ -3571,7 +4877,13 @@ impl AppView {
                     .child(
                         div()
                             .id("dialog")
-                            .w(px(if hero { 520. } else if wide { 420. } else { 380. }))
+                            .w(px(if hero {
+                                520.
+                            } else if wide {
+                                420.
+                            } else {
+                                380.
+                            }))
                             .max_h(px(if hero { 640. } else { 520. }))
                             .when(!hero, |d| d.overflow_y_scroll().p_5())
                             .when(hero, |d| d.overflow_hidden())
@@ -3583,7 +4895,8 @@ impl AppView {
                             // open: fade in while rising a little
                             .with_animation(
                                 "dialog-in",
-                                Animation::new(std::time::Duration::from_millis(220)).with_easing(ease_out_quint()),
+                                Animation::new(std::time::Duration::from_millis(220))
+                                    .with_easing(ease_out_quint()),
                                 |d, t| d.opacity(t).mt(px((1. - t) * 18.)),
                             ),
                     ),
@@ -3594,10 +4907,14 @@ impl AppView {
     }
 
     fn render_toasts(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let toasts = cx.try_global::<Toasts>().map(|t| t.items.clone()).unwrap_or_default();
+        let toasts = cx
+            .try_global::<Toasts>()
+            .map(|t| t.items.clone())
+            .unwrap_or_default();
+        let rtl = LayoutDirection::global(cx).is_rtl();
         div()
             .absolute()
-            .left_4()
+            .inset_s(rems(1.), cx)
             .bottom_4()
             .flex()
             .flex_col()
@@ -3605,7 +4922,8 @@ impl AppView {
             .children(toasts.into_iter().map(|t| {
                 let anim_id = SharedString::from(format!("toast-in-{}", t.id));
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
+                    .when(rtl, |d| d.max_w(px(440.)).flex_wrap().gap_y_2())
                     .items_center()
                     .gap_4()
                     .px_4()
@@ -3615,7 +4933,7 @@ impl AppView {
                     .text_sm()
                     .text_color(white())
                     .shadow_lg()
-                    .child(t.text.clone())
+                    .child(rtl_prose(t.text.clone(), cx))
                     .when_some(t.action.clone(), |d, (label, f)| {
                         let id = t.id;
                         d.child(
@@ -3632,25 +4950,39 @@ impl AppView {
                                 }),
                         )
                     })
-                    .children(t.extra.clone().into_iter().enumerate().map(|(i, (label, f))| {
-                        let id = t.id;
-                        div()
-                            .id(SharedString::from(format!("toast-{id}-{i}")))
-                            .text_color(rgb(0x3ea6ff))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .cursor_pointer()
-                            .child(label)
-                            .on_click(move |_, window, cx| {
-                                f(window, cx);
-                                cx.default_global::<Toasts>().items.retain(|x| x.id != id);
-                                cx.refresh_windows();
-                            })
-                    }))
-                .with_animation(
-                    anim_id,
-                    Animation::new(std::time::Duration::from_millis(240)).with_easing(ease_out_quint()),
-                    |d, t| d.opacity(t).ml(px((1. - t) * -24.)),
-                )
+                    .children(
+                        t.extra
+                            .clone()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, (label, f))| {
+                                let id = t.id;
+                                div()
+                                    .id(SharedString::from(format!("toast-{id}-{i}")))
+                                    .text_color(rgb(0x3ea6ff))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .child(label)
+                                    .on_click(move |_, window, cx| {
+                                        f(window, cx);
+                                        cx.default_global::<Toasts>().items.retain(|x| x.id != id);
+                                        cx.refresh_windows();
+                                    })
+                            }),
+                    )
+                    .with_animation(
+                        anim_id,
+                        Animation::new(std::time::Duration::from_millis(240))
+                            .with_easing(ease_out_quint()),
+                        move |d, t| {
+                            let offset = px((1. - t) * -24.);
+                            if rtl {
+                                d.opacity(t).mr(offset)
+                            } else {
+                                d.opacity(t).ml(offset)
+                            }
+                        },
+                    )
             }))
     }
 }
@@ -3664,16 +4996,26 @@ impl Render for AppView {
         }
         if std::mem::take(&mut self.reload_page) {
             // account changed: feeds that depend on it are rebuilt (the watch page keeps playing)
-            if matches!(self.route, Route::Home | Route::Subscriptions | Route::Channels) {
+            if matches!(
+                self.route,
+                Route::Home | Route::Subscriptions | Route::Channels
+            ) {
                 self.page = build_page(&self.route, window, cx);
             }
         }
         self.sync_account_playlists(cx);
         self.sync_favorite_membership(cx);
         if let Some(id) = self.pending_watch_sync.take() {
-            if let Route::Watch { id: cur, playlist, .. } = &self.route {
+            if let Route::Watch {
+                id: cur, playlist, ..
+            } = &self.route
+            {
                 if *cur != id {
-                    let r = Route::Watch { id, playlist: playlist.clone(), start: None };
+                    let r = Route::Watch {
+                        id,
+                        playlist: playlist.clone(),
+                        start: None,
+                    };
                     let page = build_page(&r, window, cx);
                     let old = std::mem::replace(&mut self.route, r);
                     let old_page = std::mem::replace(&mut self.page, page);
@@ -3708,6 +5050,7 @@ impl Render for AppView {
             .flex_col()
             .bg(p.bg)
             .text_color(p.text)
+            .text_start(cx)
             .font_family(".SystemUIFont")
             .capture_key_down(cx.listener(Self::capture_fullscreen_escape))
             .on_key_down(cx.listener(Self::on_key))
@@ -3729,7 +5072,11 @@ impl Render for AppView {
             .relative()
             .overflow_hidden()
             // the players drawn over this area (by `Shell`) are clipped to it
-            .child(canvas(move |b, _, _| clip.set(Some(b)), |_, _, _, _| {}).absolute().size_full())
+            .child(
+                canvas(move |b, _, _| clip.set(Some(b)), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
             // Measure inside the page's px_6 gutters before the cached page lays out its cards.
             .child(
                 canvas(
@@ -3752,10 +5099,15 @@ impl Render for AppView {
                 // each newly shown page fades in; the animation stops after 160 ms
                 div()
                     .size_full()
-                    .child(self.page.clone().cached(StyleRefinement::default().size_full()))
+                    .child(
+                        self.page
+                            .clone()
+                            .cached(StyleRefinement::default().size_full()),
+                    )
                     .with_animation(
                         SharedString::from(format!("page-in-{}", self.page.entity_id())),
-                        Animation::new(std::time::Duration::from_millis(160)).with_easing(ease_out_quint()),
+                        Animation::new(std::time::Duration::from_millis(160))
+                            .with_easing(ease_out_quint()),
                         |d, t| d.opacity(0.35 + 0.65 * t),
                     ),
             );
@@ -3768,27 +5120,52 @@ impl Render for AppView {
             } else {
                 Some(self.render_sidebar(cx))
             };
-            root = root.child(self.render_topbar(window, cx)).children(self.render_tabs(cx)).child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .children(sidebar)
-                    .child(page_area.flex_1().min_w_0().h_full()),
-            );
+            root = root
+                .child(self.render_topbar(window, cx))
+                .children(self.render_tabs(cx))
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .flex_1()
+                        .min_h_0()
+                        .children(sidebar)
+                        .child(page_area.flex_1().min_w_0().h_full()),
+                );
             {
                 // a smaller window keeps the mini player on screen
                 let vp = window.viewport_size();
                 self.mini_geom = clamp_mini(self.mini_geom, vp.width.into(), vp.height.into());
             }
-            root = root.children(self.render_mini_player(cx)).children(self.render_mini_drag(cx));
+            root = root
+                .children(self.render_mini_player(cx))
+                .children(self.render_mini_drag(cx));
             // deferred: drawn above the player, which `Shell` draws over this view
             root = root.children(self.render_drawer(cx).map(deferred));
         }
         root = root.children(self.render_dl_panel(cx));
-        root = root.children(self.render_menu(cx)).children(self.render_dialog(cx)).child(deferred(self.render_toasts(cx)));
+        root = root
+            .children(self.render_menu(cx))
+            .children(self.render_dialog(cx))
+            .child(deferred(self.render_toasts(cx)));
         root
     }
+}
+
+fn back_icon(direction: LayoutDirection) -> &'static str {
+    back_nav_icon(direction)
+}
+
+fn forward_chevron(direction: LayoutDirection) -> &'static str {
+    forward_nav_chevron(direction)
+}
+
+#[cfg(test)]
+#[::core::prelude::v1::test]
+fn navigation_icons_follow_the_interface_direction() {
+    assert_eq!(back_icon(LayoutDirection::Ltr), "arrow-left");
+    assert_eq!(back_icon(LayoutDirection::Rtl), "arrow-right");
+    assert_eq!(forward_chevron(LayoutDirection::Ltr), "chevron-right");
+    assert_eq!(forward_chevron(LayoutDirection::Rtl), "chevron-left");
 }
 
 /// Maximizes, or restores a maximized window.
@@ -3819,7 +5196,10 @@ fn strip_download_section(notes: &str) -> String {
     let mut skipping = false;
     for line in notes.lines() {
         if line.starts_with("## ") {
-            skipping = line.trim_start_matches('#').trim().eq_ignore_ascii_case("download");
+            skipping = line
+                .trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("download");
         }
         if !skipping {
             out.push(line);
@@ -3830,9 +5210,14 @@ fn strip_download_section(notes: &str) -> String {
 
 fn hide_to_tray(window: &Window) -> bool {
     #[cfg(windows)]
-    { crate::tray::hide(window) }
+    {
+        crate::tray::hide(window)
+    }
     #[cfg(not(windows))]
-    { let _ = window; false }
+    {
+        let _ = window;
+        false
+    }
 }
 
 /// Brings a minimized window back (leaves maximized/normal windows as they are).
@@ -3891,7 +5276,9 @@ fn window_controls(maximized: bool, cx: &App) -> impl IntoElement {
             .h(px(56.))
             .text_color(p.text)
             .window_control_area(area)
-            .when(close, |d| d.hover(|s| s.bg(rgb(0xc42b1c)).text_color(white())))
+            .when(close, |d| {
+                d.hover(|s| s.bg(rgb(0xc42b1c)).text_color(white()))
+            })
             .when(!close, move |d| d.hover(move |s| s.bg(p.hover)))
             .child(icon(icon_name).size_4().text_color(p.text))
             // Handle the click ourselves too: Windows only routes it to the caption button
@@ -3918,10 +5305,16 @@ fn window_controls(maximized: bool, cx: &App) -> impl IntoElement {
     };
     div()
         .flex()
+        .flex_none()
         .h_full()
         .self_start()
         .child(btn("win-min", "minus", WindowControlArea::Min, false))
-        .child(btn("win-max", if maximized { "copy" } else { "square" }, WindowControlArea::Max, false))
+        .child(btn(
+            "win-max",
+            if maximized { "copy" } else { "square" },
+            WindowControlArea::Max,
+            false,
+        ))
         .child(btn("win-close", "x", WindowControlArea::Close, true))
 }
 
@@ -3929,20 +5322,38 @@ fn build_page(route: &Route, window: &mut Window, cx: &mut App) -> AnyView {
     match route {
         Route::Home => cx.new(|cx| home::HomePage::new(0, window, cx)).into(),
         Route::Explore(i) => cx.new(|cx| home::HomePage::new(i + 1, window, cx)).into(),
-        Route::Shorts(id) => cx.new(|cx| shorts::ShortsPage::new(id.clone(), window, cx)).into(),
+        Route::Shorts(id) => cx
+            .new(|cx| shorts::ShortsPage::new(id.clone(), window, cx))
+            .into(),
         Route::Subscriptions => cx.new(|cx| subscriptions::FeedPage::new(window, cx)).into(),
-        Route::Channels => cx.new(|cx| subscriptions::ChannelsPage::new(window, cx)).into(),
+        Route::Channels => cx
+            .new(|cx| subscriptions::ChannelsPage::new(window, cx))
+            .into(),
         Route::History => cx.new(|cx| library::HistoryPage::new(window, cx)).into(),
         Route::Library => cx.new(|cx| library::LibraryPage::new(window, cx)).into(),
-        Route::LocalPlaylist(id) => cx.new(|cx| playlist::PlaylistPage::local(*id, window, cx)).into(),
-        Route::Playlist(id) => cx.new(|cx| playlist::PlaylistPage::remote(id.clone(), window, cx)).into(),
-        Route::Search(q) => cx.new(|cx| search::SearchPage::new(q.clone(), window, cx)).into(),
-        Route::Channel(id) => cx.new(|cx| channel::ChannelPage::new(id.clone(), window, cx)).into(),
-        Route::Watch { id, playlist, start } => {
-            cx.new(|cx| watch::WatchPage::new(id.clone(), playlist.clone(), *start, window, cx)).into()
-        }
+        Route::LocalPlaylist(id) => cx
+            .new(|cx| playlist::PlaylistPage::local(*id, window, cx))
+            .into(),
+        Route::Playlist(id) => cx
+            .new(|cx| playlist::PlaylistPage::remote(id.clone(), window, cx))
+            .into(),
+        Route::Search(q) => cx
+            .new(|cx| search::SearchPage::new(q.clone(), window, cx))
+            .into(),
+        Route::Channel(id) => cx
+            .new(|cx| channel::ChannelPage::new(id.clone(), window, cx))
+            .into(),
+        Route::Watch {
+            id,
+            playlist,
+            start,
+        } => cx
+            .new(|cx| watch::WatchPage::new(id.clone(), playlist.clone(), *start, window, cx))
+            .into(),
         Route::Settings => cx.new(|cx| settings::SettingsPage::new(window, cx)).into(),
-        Route::Downloads => cx.new(|cx| downloads::DownloadsPage::new(window, cx)).into(),
+        Route::Downloads => cx
+            .new(|cx| downloads::DownloadsPage::new(window, cx))
+            .into(),
     }
 }
 
@@ -3963,13 +5374,15 @@ pub fn reveal_in_folder(path: &str, cx: &mut App) {
         // an error dialog when Explorer can't open the folder). That must not happen on
         // GPUI's thread, so it runs on its own thread with its own COM apartment.
         let path = path.to_path_buf();
-        let _ = std::thread::Builder::new().name("reveal-in-folder".into()).spawn(move || {
-            if !select_in_explorer(&path) {
-                if let Some(folder) = path.parent() {
-                    let _ = open::that(folder);
+        let _ = std::thread::Builder::new()
+            .name("reveal-in-folder".into())
+            .spawn(move || {
+                if !select_in_explorer(&path) {
+                    if let Some(folder) = path.parent() {
+                        let _ = open::that(folder);
+                    }
                 }
-            }
-        });
+            });
     }
     #[cfg(not(windows))]
     if let Some(folder) = path.parent() {
@@ -3984,7 +5397,9 @@ fn select_in_explorer(path: &std::path::Path) -> bool {
     use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
     use windows::core::PCWSTR;
 
-    let Ok(path) = std::path::absolute(path) else { return false };
+    let Ok(path) = std::path::absolute(path) else {
+        return false;
+    };
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     unsafe {
         let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
@@ -4001,16 +5416,26 @@ fn select_in_explorer(path: &std::path::Path) -> bool {
     }
 }
 
-/// Redraws every built page (current, back and forward history). Pages are cached
+/// Redraws every built page, including pages in inactive tabs. Pages are cached
 /// views, so a settings change (density, corners, columns, accent...) only shows
 /// after their entities are notified.
 pub fn refresh_all_pages(cx: &mut App) {
-    let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()) else { return };
+    let Some(app) = cx.try_global::<AppHandle>().and_then(|h| h.0.upgrade()) else {
+        return;
+    };
     let ids: Vec<EntityId> = {
         let a = app.read(cx);
         std::iter::once(a.page.entity_id())
             .chain(a.history.iter().map(|(_, v)| v.entity_id()))
             .chain(a.forward.iter().map(|(_, v)| v.entity_id()))
+            .chain(a.tabs.iter().flat_map(|tab| {
+                tab.page.iter().map(AnyView::entity_id).chain(
+                    tab.history
+                        .iter()
+                        .chain(&tab.forward)
+                        .map(|(_, v)| v.entity_id()),
+                )
+            }))
             .collect()
     };
     for id in ids {
@@ -4060,7 +5485,9 @@ const MINI_MAX_W: f32 = 960.0;
 
 /// Keeps the mini player (right, bottom, width) inside a vw x vh window.
 fn clamp_mini((right, bottom, w): (f32, f32, f32), vw: f32, vh: f32) -> (f32, f32, f32) {
-    let w = w.clamp(MINI_MIN_W, MINI_MAX_W).min((vw - 16.0).max(MINI_MIN_W));
+    let w = w
+        .clamp(MINI_MIN_W, MINI_MAX_W)
+        .min((vw - 16.0).max(MINI_MIN_W));
     // video plus the title strip
     let h = w * 9.0 / 16.0 + 52.0;
     let right = right.clamp(8.0, (vw - w - 8.0).max(8.0));

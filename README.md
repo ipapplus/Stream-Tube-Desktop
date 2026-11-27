@@ -233,9 +233,18 @@ Downloads above 360p need yt-dlp and FFmpeg. The app offers to fetch both the fi
 time you need them, on Windows and Linux, or get them any time from *Settings → Downloads*.
 You can also install them with your package manager instead.
 
+### Arabic Windows Edition
+
+The `ipapplus` personal fork provides a Windows x64 build with an Arabic
+interface, RTL navigation and player menus, mixed Arabic/Latin text rendering,
+and localized counts. See the [edition documentation](ARABIC-WINDOWS-EDITION.md)
+and download the runtime ZIP from the
+[Arabic Windows release](https://github.com/ipapplus/Stream-Tube-Desktop/releases/tag/v0.7.5-alpha-arabic.1).
+This fork release is separate from the original distribution described above.
+
 ### Verifying a download
 
-Every file on a release is built by the public [Release workflow](.github/workflows/release.yml)
+Every file on an upstream release is built by the public [Release workflow](.github/workflows/release.yml)
 on GitHub's runners. Each release lists the files' SHA-256 checksums in `SHA256SUMS.txt`,
 and each file has a signed build provenance attestation that ties it to the workflow
 run that built it. With the [GitHub CLI](https://cli.github.com):

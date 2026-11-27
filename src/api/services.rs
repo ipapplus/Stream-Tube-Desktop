@@ -39,13 +39,21 @@ pub struct Segment {
     pub uuid: String,
 }
 
-pub fn sponsor_segments(video_id: &str, server: &str, categories: &[String]) -> Result<Vec<Segment>> {
+pub fn sponsor_segments(
+    video_id: &str,
+    server: &str,
+    categories: &[String],
+) -> Result<Vec<Segment>> {
     if categories.is_empty() {
         return Ok(Vec::new());
     }
     let cats = format!(
         "[{}]",
-        categories.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(",")
+        categories
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(",")
     );
     let url = format!(
         "{}/api/skipSegments/{}?categories={}&actionTypes=%5B%22skip%22,%22mute%22,%22poi%22,%22full%22%5D",
@@ -62,7 +70,12 @@ pub fn sponsor_segments(video_id: &str, server: &str, categories: &[String]) -> 
         if entry.get("videoID").and_then(Value::as_str) != Some(video_id) {
             continue;
         }
-        for seg in entry.get("segments").and_then(Value::as_array).into_iter().flatten() {
+        for seg in entry
+            .get("segments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let arr = seg.get("segment").and_then(Value::as_array);
             let (Some(a), Some(b)) = (
                 arr.and_then(|a| a.first()).and_then(Value::as_f64),
@@ -84,16 +97,28 @@ pub fn sponsor_segments(video_id: &str, server: &str, categories: &[String]) -> 
 }
 
 pub fn sponsor_category_color(cat: &str) -> u32 {
-    SB_CATEGORIES.iter().find(|c| c.0 == cat).map(|c| c.2).unwrap_or(0xaaaaaa)
+    SB_CATEGORIES
+        .iter()
+        .find(|c| c.0 == cat)
+        .map(|c| c.2)
+        .unwrap_or(0xaaaaaa)
 }
 
 pub fn sponsor_category_name(cat: &str) -> &'static str {
-    SB_CATEGORIES.iter().find(|c| c.0 == cat).map(|c| c.1).unwrap_or("Segment")
+    SB_CATEGORIES
+        .iter()
+        .find(|c| c.0 == cat)
+        .map(|c| c.1)
+        .unwrap_or("Segment")
 }
 
 /// Report that a segment was skipped (helps SponsorBlock stats, like SmartTube does).
 pub fn sponsor_viewed(server: &str, uuid: &str) {
-    let url = format!("{}/api/viewedVideoSponsorTime?UUID={}", server.trim_end_matches('/'), uuid);
+    let url = format!(
+        "{}/api/viewedVideoSponsorTime?UUID={}",
+        server.trim_end_matches('/'),
+        uuid
+    );
     let _ = http::post_json(&url, &Value::Null, &[]);
 }
 
@@ -118,7 +143,10 @@ pub fn dearrow_branding(video_id: &str) -> Option<Branding> {
     if let Some(b) = branding_cached(video_id) {
         return b;
     }
-    let url = format!("https://sponsor.ajay.app/api/branding/{}", sha_prefix(video_id));
+    let url = format!(
+        "https://sponsor.ajay.app/api/branding/{}",
+        sha_prefix(video_id)
+    );
     let res = http::get_json(&url).ok().and_then(|v| {
         let e = v.get(video_id)?;
         let title = e
@@ -136,9 +164,15 @@ pub fn dearrow_branding(video_id: &str) -> Option<Branding> {
         let thumbnail_time = e
             .get("thumbnails")
             .and_then(Value::as_array)
-            .and_then(|t| t.iter().find(|x| !x.get("original").and_then(Value::as_bool).unwrap_or(false)))
+            .and_then(|t| {
+                t.iter()
+                    .find(|x| !x.get("original").and_then(Value::as_bool).unwrap_or(false))
+            })
             .and_then(|x| x.get("timestamp").and_then(Value::as_f64));
-        Some(Branding { title, thumbnail_time })
+        Some(Branding {
+            title,
+            thumbnail_time,
+        })
     });
     {
         let mut c = branding_cache().lock();
@@ -167,7 +201,9 @@ pub struct Votes {
 }
 
 pub fn ryd_votes(video_id: &str) -> Result<Votes> {
-    let v = http::get_json(&format!("https://returnyoutubedislikeapi.com/votes?videoId={video_id}"))?;
+    let v = http::get_json(&format!(
+        "https://returnyoutubedislikeapi.com/votes?videoId={video_id}"
+    ))?;
     Ok(Votes {
         likes: v.get("likes").and_then(Value::as_u64).unwrap_or(0),
         dislikes: v.get("dislikes").and_then(Value::as_u64).unwrap_or(0),
@@ -180,7 +216,9 @@ pub fn ryd_votes(video_id: &str) -> Result<Votes> {
 
 /// Fetches a channel's latest uploads via RSS (fast, light, 15 items).
 pub fn channel_rss(channel_id: &str) -> Result<(String, Vec<VideoItem>)> {
-    let xml = http::get_text(&format!("https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"))?;
+    let xml = http::get_text(&format!(
+        "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+    ))?;
     let tag = |s: &str, t: &str| -> Option<String> {
         let start = s.find(&format!("<{t}"))?;
         let after = &s[start..];
@@ -204,7 +242,9 @@ pub fn channel_rss(channel_id: &str) -> Result<(String, Vec<VideoItem>)> {
         .unwrap_or_default();
     let mut out = Vec::new();
     for entry in xml.split("<entry>").skip(1) {
-        let Some(id) = tag(entry, "yt:videoId") else { continue };
+        let Some(id) = tag(entry, "yt:videoId") else {
+            continue;
+        };
         let published = tag(entry, "published").and_then(|p| parse_iso8601(&p));
         let views = attr(entry, "media:statistics", "views").and_then(|v| v.parse::<u64>().ok());
         let link = attr(entry, "link", "href").unwrap_or_default();
@@ -235,7 +275,9 @@ fn unescape(s: &str) -> String {
 
 /// "2024-01-02T03:04:05+00:00" -> unix ts
 pub fn parse_iso8601(s: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp())
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.timestamp())
 }
 
 #[cfg(test)]
@@ -244,7 +286,17 @@ mod tests {
     #[test]
     #[ignore]
     fn live_services() {
-        let segs = sponsor_segments("dQw4w9WgXcQ", "https://sponsor.ajay.app", &["sponsor".into(), "intro".into(), "outro".into(), "music_offtopic".into()]).unwrap();
+        let segs = sponsor_segments(
+            "dQw4w9WgXcQ",
+            "https://sponsor.ajay.app",
+            &[
+                "sponsor".into(),
+                "intro".into(),
+                "outro".into(),
+                "music_offtopic".into(),
+            ],
+        )
+        .unwrap();
         println!("segments {segs:?}");
         println!("branding {:?}", dearrow_branding("dQw4w9WgXcQ"));
         println!("votes {:?}", ryd_votes("dQw4w9WgXcQ").unwrap());
@@ -275,7 +327,10 @@ pub fn new_sb_user_id() -> String {
     use std::hash::{BuildHasher, Hasher};
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut out = String::with_capacity(36);
-    let mut seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
     while out.len() < 36 {
         let mut h = std::collections::hash_map::RandomState::new().build_hasher();
         h.write_u64(seed);
@@ -298,7 +353,11 @@ pub struct SbUserInfo {
 }
 
 pub fn sponsor_user_info(server: &str, private_id: &str) -> Result<SbUserInfo> {
-    let url = format!("{}/api/userInfo?userID={}", server.trim_end_matches('/'), http::urlencode(private_id));
+    let url = format!(
+        "{}/api/userInfo?userID={}",
+        server.trim_end_matches('/'),
+        http::urlencode(private_id)
+    );
     let (status, v) = http::get_json_status(&url)?;
     if status == 404 {
         // a fresh ID that never submitted anything
@@ -308,7 +367,11 @@ pub fn sponsor_user_info(server: &str, private_id: &str) -> Result<SbUserInfo> {
         anyhow::bail!("server answered {status}");
     }
     let num = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
-    let name = v.get("userName").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let name = v
+        .get("userName")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     let public = v.get("userID").and_then(|x| x.as_str()).unwrap_or("");
     Ok(SbUserInfo {
         // without a username set, the server echoes the public ID

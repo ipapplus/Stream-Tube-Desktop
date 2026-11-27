@@ -44,12 +44,20 @@ impl Mode {
 
 /// The setting after `cur` in `MODES`, for the shortcut that cycles through them.
 pub fn next_mode(cur: &str) -> &'static str {
-    let i = MODES.iter().position(|(v, _)| *v == cur).map(|i| i + 1).unwrap_or(0);
+    let i = MODES
+        .iter()
+        .position(|(v, _)| *v == cur)
+        .map(|i| i + 1)
+        .unwrap_or(0);
     MODES[i % MODES.len()].0
 }
 
 pub fn label(value: &str) -> &'static str {
-    MODES.iter().find(|(v, _)| *v == value).map(|(_, l)| *l).unwrap_or(MODES[0].1)
+    MODES
+        .iter()
+        .find(|(v, _)| *v == value)
+        .map(|(_, l)| *l)
+        .unwrap_or(MODES[0].1)
 }
 
 /// Part of the frame, as fractions of its width and height.
@@ -62,7 +70,12 @@ pub struct Region {
 }
 
 impl Region {
-    pub const FULL: Region = Region { x: 0.0, y: 0.0, w: 1.0, h: 1.0 };
+    pub const FULL: Region = Region {
+        x: 0.0,
+        y: 0.0,
+        w: 1.0,
+        h: 1.0,
+    };
 
     /// The same part with `trim` (fractions of the frame) taken off each side.
     fn trimmed(self, trim: (f32, f32)) -> Region {
@@ -71,7 +84,12 @@ impl Region {
         if r <= l || b <= t {
             return self;
         }
-        Region { x: l, y: t, w: r - l, h: b - t }
+        Region {
+            x: l,
+            y: t,
+            w: r - l,
+            h: b - t,
+        }
     }
 }
 
@@ -91,12 +109,22 @@ pub fn picture_region(frame: (f32, f32), video: (f32, f32)) -> Region {
     }
     let k = (fw / vw).min(fh / vh);
     let (w, h) = ((vw * k / fw).min(1.0), (vh * k / fh).min(1.0));
-    Region { x: (1.0 - w) / 2.0, y: (1.0 - h) / 2.0, w, h }
+    Region {
+        x: (1.0 - w) / 2.0,
+        y: (1.0 - h) / 2.0,
+        w,
+        h,
+    }
 }
 
 /// The part of the frame to show and how, for `mode`. `auto_trim` is what
 /// [`AutoCrop`] found.
-pub fn resolve(mode: Mode, frame: (f32, f32), video: (f32, f32), auto_trim: (f32, f32)) -> (Region, Fit) {
+pub fn resolve(
+    mode: Mode,
+    frame: (f32, f32),
+    video: (f32, f32),
+    auto_trim: (f32, f32),
+) -> (Region, Fit) {
     let pic = picture_region(frame, video);
     match mode {
         Mode::Original => (pic, Fit::Contain),
@@ -111,14 +139,27 @@ pub fn resolve(mode: Mode, frame: (f32, f32), video: (f32, f32), auto_trim: (f32
                 return (pic, Fit::Contain);
             }
             let h = pic.h * aspect / r;
-            (Region { x: pic.x, y: pic.y + (pic.h - h) / 2.0, w: pic.w, h }, Fit::Contain)
+            (
+                Region {
+                    x: pic.x,
+                    y: pic.y + (pic.h - h) / 2.0,
+                    w: pic.w,
+                    h,
+                },
+                Fit::Contain,
+            )
         }
     }
 }
 
 /// Where to draw the whole frame (x, y, width, height, relative to `area`) so
 /// that `region` of it is fitted to the area and centered in it.
-pub fn layout(area: (f32, f32), frame: (f32, f32), region: Region, fit: Fit) -> (f32, f32, f32, f32) {
+pub fn layout(
+    area: (f32, f32),
+    frame: (f32, f32),
+    region: Region,
+    fit: Fit,
+) -> (f32, f32, f32, f32) {
     let ((aw, ah), (fw, fh)) = (area, frame);
     let (cw, ch) = (region.w * fw, region.h * fh);
     if cw <= 0.0 || ch <= 0.0 {
@@ -136,7 +177,12 @@ pub fn layout(area: (f32, f32), frame: (f32, f32), region: Region, fit: Fit) -> 
         Fit::Stretch => (aw / cw, ah / ch),
     };
     let (w, h) = (fw * sx, fh * sy);
-    (aw / 2.0 - (region.x + region.w / 2.0) * w, ah / 2.0 - (region.y + region.h / 2.0) * h, w, h)
+    (
+        aw / 2.0 - (region.x + region.w / 2.0) * w,
+        ah / 2.0 - (region.y + region.h / 2.0) * h,
+        w,
+        h,
+    )
 }
 
 /// The brightest channel a pixel can have and still count as a black bar
@@ -159,8 +205,18 @@ pub fn detect_bars(data: &[u8], w: u32, h: u32) -> Option<(f32, f32)> {
         data[i] <= DARK && data[i + 1] <= DARK && data[i + 2] <= DARK
     };
     // a line is a bar when nearly all of it is black (a channel logo can sit in a bar)
-    let row_dark = |y: u32| (0..SAMPLES).filter(|&i| dark((w - 1) * i / (SAMPLES - 1), y)).count() as u32 >= SAMPLES - 2;
-    let col_dark = |x: u32| (0..SAMPLES).filter(|&i| dark(x, (h - 1) * i / (SAMPLES - 1))).count() as u32 >= SAMPLES - 2;
+    let row_dark = |y: u32| {
+        (0..SAMPLES)
+            .filter(|&i| dark((w - 1) * i / (SAMPLES - 1), y))
+            .count() as u32
+            >= SAMPLES - 2
+    };
+    let col_dark = |x: u32| {
+        (0..SAMPLES)
+            .filter(|&i| dark(x, (h - 1) * i / (SAMPLES - 1)))
+            .count() as u32
+            >= SAMPLES - 2
+    };
     let edge = |len: u32, is_dark: &dyn Fn(u32) -> bool| -> Option<u32> {
         let limit = (len as f32 * MAX_TRIM) as u32;
         let first = (0..=limit).find(|&i| !is_dark(i))?;
@@ -188,8 +244,16 @@ pub struct AutoCrop {
 impl AutoCrop {
     /// Takes one detection; true when the crop changed.
     pub fn feed(&mut self, detected: Option<(f32, f32)>) -> bool {
-        let Some((dx, dy)) = detected else { return false };
-        let snap = |v: f32| if v < 0.01 { 0.0 } else { (v * 400.0).floor() / 400.0 };
+        let Some((dx, dy)) = detected else {
+            return false;
+        };
+        let snap = |v: f32| {
+            if v < 0.01 {
+                0.0
+            } else {
+                (v * 400.0).floor() / 400.0
+            }
+        };
         let (dx, dy) = (snap(dx), snap(dy));
         let old = self.trim;
         // the picture reaching into the cropped part: show it at once
@@ -203,7 +267,9 @@ impl AutoCrop {
         // moment doesn't zoom in
         if dx > self.trim.0 + TOLERANCE || dy > self.trim.1 + TOLERANCE {
             let target = (dx.max(self.trim.0), dy.max(self.trim.1));
-            let near = |a: (f32, f32)| (a.0 - target.0).abs() <= TOLERANCE && (a.1 - target.1).abs() <= TOLERANCE;
+            let near = |a: (f32, f32)| {
+                (a.0 - target.0).abs() <= TOLERANCE && (a.1 - target.1).abs() <= TOLERANCE
+            };
             let n = match self.candidate {
                 Some((c, n)) if near(c) => n + 1,
                 _ => 1,
@@ -226,7 +292,9 @@ mod tests {
     use super::*;
 
     fn close(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> bool {
-        [(a.0, b.0), (a.1, b.1), (a.2, b.2), (a.3, b.3)].iter().all(|(x, y)| (x - y).abs() < 0.5)
+        [(a.0, b.0), (a.1, b.1), (a.2, b.2), (a.3, b.3)]
+            .iter()
+            .all(|(x, y)| (x - y).abs() < 0.5)
     }
 
     /// A BGRA frame with black bars of `bar_y` rows top and bottom and `bar_x` columns left and right.
@@ -243,25 +311,46 @@ mod tests {
 
     #[test]
     fn original_fits_the_picture_like_before() {
-        let (r, fit) = resolve(Mode::Original, (1920.0, 1080.0), (1920.0, 1080.0), (0.0, 0.0));
+        let (r, fit) = resolve(
+            Mode::Original,
+            (1920.0, 1080.0),
+            (1920.0, 1080.0),
+            (0.0, 0.0),
+        );
         // 16:9 in a 21:9 screen: pillarboxed
-        assert!(close(layout((3440.0, 1440.0), (1920.0, 1080.0), r, fit), (440.0, 0.0, 2560.0, 1440.0)));
+        assert!(close(
+            layout((3440.0, 1440.0), (1920.0, 1080.0), r, fit),
+            (440.0, 0.0, 2560.0, 1440.0)
+        ));
     }
 
     #[test]
     fn a_cinemascope_ratio_fills_an_ultrawide_screen() {
-        let (r, fit) = resolve(Mode::Ratio(2.39), (1920.0, 1080.0), (1920.0, 1080.0), (0.0, 0.0));
+        let (r, fit) = resolve(
+            Mode::Ratio(2.39),
+            (1920.0, 1080.0),
+            (1920.0, 1080.0),
+            (0.0, 0.0),
+        );
         let (x, y, w, h) = layout((3440.0, 1440.0), (1920.0, 1080.0), r, fit);
         // the film's 2.39:1 band fills the 3440x1440 screen (to a pixel: 21:9 is 2.389:1)
         let (band_w, band_h) = (w * r.w, h * r.h);
-        assert!((band_w - 3440.0).abs() < 1.0 && (band_h - 1440.0).abs() < 1.0, "{band_w} {band_h}");
+        assert!(
+            (band_w - 3440.0).abs() < 1.0 && (band_h - 1440.0).abs() < 1.0,
+            "{band_w} {band_h}"
+        );
         // the bars are drawn off screen
         assert!(x.abs() < 0.5 && y < -200.0, "{x} {y}");
     }
 
     #[test]
     fn ratios_never_crop_the_sides_of_tall_videos() {
-        let (r, _) = resolve(Mode::Ratio(2.39), (608.0, 1080.0), (608.0, 1080.0), (0.0, 0.0));
+        let (r, _) = resolve(
+            Mode::Ratio(2.39),
+            (608.0, 1080.0),
+            (608.0, 1080.0),
+            (0.0, 0.0),
+        );
         assert_eq!(r, Region::FULL);
     }
 
@@ -272,8 +361,16 @@ mod tests {
         let (x, y, w, h) = layout(area, (1920.0, 1080.0), r, fit);
         assert!(x <= 0.0 && y <= 0.0 && x + w >= area.0 && y + h >= area.1);
         assert!((w / h - 16.0 / 9.0).abs() < 0.01);
-        let (r, fit) = resolve(Mode::Stretch, (1920.0, 1080.0), (1920.0, 1080.0), (0.0, 0.0));
-        assert!(close(layout(area, (1920.0, 1080.0), r, fit), (0.0, 0.0, 3440.0, 1440.0)));
+        let (r, fit) = resolve(
+            Mode::Stretch,
+            (1920.0, 1080.0),
+            (1920.0, 1080.0),
+            (0.0, 0.0),
+        );
+        assert!(close(
+            layout(area, (1920.0, 1080.0), r, fit),
+            (0.0, 0.0, 3440.0, 1440.0)
+        ));
     }
 
     #[test]

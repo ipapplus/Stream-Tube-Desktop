@@ -39,7 +39,8 @@ struct Session {
 fn session() -> &'static Mutex<Option<Arc<Session>>> {
     static S: OnceLock<Mutex<Option<Arc<Session>>>> = OnceLock::new();
     S.get_or_init(|| {
-        let s: Option<Session> = crate::store::kv_get("web_session").and_then(|s| serde_json::from_str(&s).ok());
+        let s: Option<Session> =
+            crate::store::kv_get("web_session").and_then(|s| serde_json::from_str(&s).ok());
         let s = s.filter(|s| has_login(&s.cookies)).map(|mut s| {
             if s.history_key.is_none() {
                 s.history_key = Some(rand::random());
@@ -52,11 +53,16 @@ fn session() -> &'static Mutex<Option<Arc<Session>>> {
 }
 
 fn save(s: Option<&Session>) {
-    crate::store::kv_set("web_session", &s.map(|s| serde_json::to_string(s).unwrap_or_default()).unwrap_or_default());
+    crate::store::kv_set(
+        "web_session",
+        &s.map(|s| serde_json::to_string(s).unwrap_or_default())
+            .unwrap_or_default(),
+    );
 }
 
 fn has_login(c: &BTreeMap<String, String>) -> bool {
-    (c.contains_key("SAPISID") || c.contains_key("__Secure-3PAPISID")) && (c.contains_key("SID") || c.contains_key("__Secure-3PSID"))
+    (c.contains_key("SAPISID") || c.contains_key("__Secure-3PAPISID"))
+        && (c.contains_key("SID") || c.contains_key("__Secure-3PSID"))
 }
 
 /// Whether the browser sign-in is connected.
@@ -78,9 +84,16 @@ pub fn disconnect() {
 /// Stores a set of youtube.com cookies and checks they belong to a signed-in account.
 fn connect(cookies: BTreeMap<String, String>, page_id: Option<String>) -> Result<String> {
     if !has_login(&cookies) {
-        return Err(anyhow!("These cookies aren't from a signed-in YouTube session."));
+        return Err(anyhow!(
+            "These cookies aren't from a signed-in YouTube session."
+        ));
     }
-    let mut candidate = Session { cookies, page_id, history_key: Some(rand::random()), ..Default::default() };
+    let mut candidate = Session {
+        cookies,
+        page_id,
+        history_key: Some(rand::random()),
+        ..Default::default()
+    };
     let name = fetch_account_name(&candidate).context("YouTube didn't accept the session")?;
     candidate.account = Some(name.clone());
     let mut s = session().lock();
@@ -101,11 +114,17 @@ pub fn write_cookies_file() -> Option<PathBuf> {
         let mut t = String::from("# Netscape HTTP Cookie File\n");
         for (k, v) in &s.cookies {
             // domain, include subdomains, path, secure, expiry, name, value
-            t.push_str(&format!(".youtube.com\tTRUE\t/\tTRUE\t2147483647\t{k}\t{v}\n"));
+            t.push_str(&format!(
+                ".youtube.com\tTRUE\t/\tTRUE\t2147483647\t{k}\t{v}\n"
+            ));
         }
         t
     };
-    let path = crate::store::data_dir().join(format!("yt-dlp-cookies-{}-{}.txt", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+    let path = crate::store::data_dir().join(format!(
+        "yt-dlp-cookies-{}-{}.txt",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]
@@ -119,39 +138,70 @@ pub fn write_cookies_file() -> Option<PathBuf> {
 }
 
 fn cookie_header(session: &Session) -> String {
-    session.cookies.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("; ")
+    session
+        .cookies
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn sha1_hex(s: &str) -> String {
     use sha1::{Digest, Sha1};
-    Sha1::digest(s.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha1::digest(s.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// The `Authorization` header youtube.com sends with its API calls.
 fn sapisid_auth(session: &Session) -> Option<String> {
     let c = &session.cookies;
     let ts = chrono::Utc::now().timestamp();
-    let parts: Vec<String> = [("SAPISIDHASH", "SAPISID"), ("SAPISID1PHASH", "__Secure-1PAPISID"), ("SAPISID3PHASH", "__Secure-3PAPISID")]
-        .iter()
-        .filter_map(|(scheme, name)| {
-            let v = c.get(*name).or_else(|| if *name == "SAPISID" { c.get("__Secure-3PAPISID") } else { None })?;
-            Some(format!("{scheme} {ts}_{}", sha1_hex(&format!("{ts} {v} {ORIGIN}"))))
-        })
-        .collect();
+    let parts: Vec<String> = [
+        ("SAPISIDHASH", "SAPISID"),
+        ("SAPISID1PHASH", "__Secure-1PAPISID"),
+        ("SAPISID3PHASH", "__Secure-3PAPISID"),
+    ]
+    .iter()
+    .filter_map(|(scheme, name)| {
+        let v = c.get(*name).or_else(|| {
+            if *name == "SAPISID" {
+                c.get("__Secure-3PAPISID")
+            } else {
+                None
+            }
+        })?;
+        Some(format!(
+            "{scheme} {ts}_{}",
+            sha1_hex(&format!("{ts} {v} {ORIGIN}"))
+        ))
+    })
+    .collect();
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 /// A call to the YouTube website's API as the signed-in user.
 pub(crate) fn session_identity() -> Option<Arc<()>> {
-    session().lock().as_ref().map(|connected| connected.identity.clone())
+    session()
+        .lock()
+        .as_ref()
+        .map(|connected| connected.identity.clone())
 }
 
 pub(crate) fn is_current_session(identity: &Arc<()>) -> bool {
     session_identity().is_some_and(|current| Arc::ptr_eq(&current, identity))
 }
 
-pub(crate) fn web_call_for_session(identity: &Arc<()>, endpoint: &str, body: Value) -> Result<Value> {
-    let connected = session().lock().clone().filter(|connected| Arc::ptr_eq(&connected.identity, identity))
+pub(crate) fn web_call_for_session(
+    identity: &Arc<()>,
+    endpoint: &str,
+    body: Value,
+) -> Result<Value> {
+    let connected = session()
+        .lock()
+        .clone()
+        .filter(|connected| Arc::ptr_eq(&connected.identity, identity))
         .ok_or_else(|| anyhow!("browser session changed"))?;
     web_call_with_session(&connected, endpoint, body)
 }
@@ -179,10 +229,14 @@ fn web_call_with_session(session: &Session, endpoint: &str, mut body: Value) -> 
     ];
     add_page_id(&mut headers, session);
     let (status, v) = http::post_session_json(
-        &format!("https://www.youtube.com/youtubei/v1/{endpoint}?prettyPrint=false"), &body, &headers,
+        &format!("https://www.youtube.com/youtubei/v1/{endpoint}?prettyPrint=false"),
+        &body,
+        &headers,
     )?;
     if status == 401 || status == 403 {
-        return Err(anyhow!("YouTube refused the browser session (HTTP {status}). Connect it again."));
+        return Err(anyhow!(
+            "YouTube refused the browser session (HTTP {status}). Connect it again."
+        ));
     }
     if !(200..300).contains(&status) {
         return Err(anyhow!("HTTP {status}"));
@@ -203,9 +257,16 @@ fn add_page_id<'a>(headers: &mut Vec<(&'static str, &'a str)>, session: &'a Sess
 
 fn fetch_account_name(session: &Session) -> Result<String> {
     let r = web_call_with_session(session, "account/account_menu", json!({}))?;
-    let header = crate::api::json::find(&r, "activeAccountHeaderRenderer").ok_or_else(|| anyhow!("not signed in"))?;
-    let name = header.get("accountName").map(crate::api::json::text).filter(|s| !s.is_empty());
-    let handle = header.get("channelHandle").map(crate::api::json::text).filter(|s| !s.is_empty());
+    let header = crate::api::json::find(&r, "activeAccountHeaderRenderer")
+        .ok_or_else(|| anyhow!("not signed in"))?;
+    let name = header
+        .get("accountName")
+        .map(crate::api::json::text)
+        .filter(|s| !s.is_empty());
+    let handle = header
+        .get("channelHandle")
+        .map(crate::api::json::text)
+        .filter(|s| !s.is_empty());
     name.or(handle).ok_or_else(|| anyhow!("not signed in"))
 }
 
@@ -227,16 +288,24 @@ impl HistorySession {
     }
 
     pub(super) fn key(&self) -> u64 {
-        self.0.history_key.expect("connected browser session has a history key")
+        self.0
+            .history_key
+            .expect("connected browser session has a history key")
     }
 
     pub(super) fn if_current<T>(&self, f: impl FnOnce() -> T) -> Option<T> {
         let active = session().lock();
-        active.as_ref().filter(|s| Arc::ptr_eq(s, &self.0)).map(|_| f())
+        active
+            .as_ref()
+            .filter(|s| Arc::ptr_eq(s, &self.0))
+            .map(|_| f())
     }
 
     pub(super) fn call(&self, endpoint: &str, body: Value) -> Result<Value> {
-        anyhow::ensure!(self.if_current(|| ()).is_some(), "YouTube history account changed");
+        anyhow::ensure!(
+            self.if_current(|| ()).is_some(),
+            "YouTube history account changed"
+        );
         web_call_with_session(&self.0, endpoint, body)
     }
 
@@ -274,19 +343,47 @@ fn find_browser() -> Option<(String, PathBuf)> {
     #[cfg(windows)]
     {
         let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
-        let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
+        let pf86 =
+            std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
         let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
         let candidates = [
-            ("Google Chrome", format!(r"{pf}\Google\Chrome\Application\chrome.exe")),
-            ("Google Chrome", format!(r"{pf86}\Google\Chrome\Application\chrome.exe")),
-            ("Google Chrome", format!(r"{local}\Google\Chrome\Application\chrome.exe")),
-            ("Microsoft Edge", format!(r"{pf86}\Microsoft\Edge\Application\msedge.exe")),
-            ("Microsoft Edge", format!(r"{pf}\Microsoft\Edge\Application\msedge.exe")),
-            ("Brave", format!(r"{pf}\BraveSoftware\Brave-Browser\Application\brave.exe")),
-            ("Brave", format!(r"{local}\BraveSoftware\Brave-Browser\Application\brave.exe")),
-            ("Chromium", format!(r"{local}\Chromium\Application\chrome.exe")),
+            (
+                "Google Chrome",
+                format!(r"{pf}\Google\Chrome\Application\chrome.exe"),
+            ),
+            (
+                "Google Chrome",
+                format!(r"{pf86}\Google\Chrome\Application\chrome.exe"),
+            ),
+            (
+                "Google Chrome",
+                format!(r"{local}\Google\Chrome\Application\chrome.exe"),
+            ),
+            (
+                "Microsoft Edge",
+                format!(r"{pf86}\Microsoft\Edge\Application\msedge.exe"),
+            ),
+            (
+                "Microsoft Edge",
+                format!(r"{pf}\Microsoft\Edge\Application\msedge.exe"),
+            ),
+            (
+                "Brave",
+                format!(r"{pf}\BraveSoftware\Brave-Browser\Application\brave.exe"),
+            ),
+            (
+                "Brave",
+                format!(r"{local}\BraveSoftware\Brave-Browser\Application\brave.exe"),
+            ),
+            (
+                "Chromium",
+                format!(r"{local}\Chromium\Application\chrome.exe"),
+            ),
         ];
-        candidates.into_iter().map(|(n, p)| (n.to_string(), PathBuf::from(p))).find(|(_, p)| p.is_file())
+        candidates
+            .into_iter()
+            .map(|(n, p)| (n.to_string(), PathBuf::from(p)))
+            .find(|(_, p)| p.is_file())
     }
     #[cfg(not(windows))]
     {
@@ -373,7 +470,11 @@ impl Cdp {
             use std::os::windows::io::AsRawHandle;
             #[link(name = "kernel32")]
             unsafe extern "system" {
-                fn SetHandleInformation(handle: *mut std::ffi::c_void, mask: u32, flags: u32) -> i32;
+                fn SetHandleInformation(
+                    handle: *mut std::ffi::c_void,
+                    mask: u32,
+                    flags: u32,
+                ) -> i32;
             }
             const HANDLE_FLAG_INHERIT: u32 = 1;
             let (r, w) = (browser_in.as_raw_handle(), browser_out.as_raw_handle());
@@ -386,27 +487,39 @@ impl Cdp {
                     return Err(std::io::Error::last_os_error().into());
                 }
             }
-            cmd.arg(format!("--remote-debugging-io-pipes={},{}", r as usize, w as usize));
+            cmd.arg(format!(
+                "--remote-debugging-io-pipes={},{}",
+                r as usize, w as usize
+            ));
         }
         let (tx, replies) = mpsc::channel();
-        std::thread::Builder::new().name("signin-devtools".into()).spawn(move || {
-            use std::io::BufRead;
-            let mut reader = std::io::BufReader::new(from_browser);
-            let mut buf = Vec::new();
-            // messages are JSON, each ended by a NUL byte
-            while reader.read_until(0, &mut buf).is_ok_and(|n| n > 0) {
-                if buf.last() == Some(&0) {
-                    buf.pop();
-                }
-                if let Ok(v) = serde_json::from_slice::<Value>(&buf) {
-                    if tx.send(v).is_err() {
-                        break;
+        std::thread::Builder::new()
+            .name("signin-devtools".into())
+            .spawn(move || {
+                use std::io::BufRead;
+                let mut reader = std::io::BufReader::new(from_browser);
+                let mut buf = Vec::new();
+                // messages are JSON, each ended by a NUL byte
+                while reader.read_until(0, &mut buf).is_ok_and(|n| n > 0) {
+                    if buf.last() == Some(&0) {
+                        buf.pop();
                     }
+                    if let Ok(v) = serde_json::from_slice::<Value>(&buf) {
+                        if tx.send(v).is_err() {
+                            break;
+                        }
+                    }
+                    buf.clear();
                 }
-                buf.clear();
-            }
-        })?;
-        Ok((Self { to_browser, replies, next_id: 0 }, ChildEnds(browser_in, browser_out)))
+            })?;
+        Ok((
+            Self {
+                to_browser,
+                replies,
+                next_id: 0,
+            },
+            ChildEnds(browser_in, browser_out),
+        ))
     }
 
     fn call(&mut self, method: &str) -> Result<Value> {
@@ -426,8 +539,13 @@ impl Cdp {
         self.to_browser.write_all(&msg)?;
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let left = deadline.checked_duration_since(Instant::now()).ok_or_else(|| anyhow!("devtools: no reply"))?;
-            let v = self.replies.recv_timeout(left).map_err(|_| anyhow!("devtools: no reply"))?;
+            let left = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or_else(|| anyhow!("devtools: no reply"))?;
+            let v = self
+                .replies
+                .recv_timeout(left)
+                .map_err(|_| anyhow!("devtools: no reply"))?;
             if v.get("id").and_then(Value::as_i64) == Some(id) {
                 anyhow::ensure!(v.get("error").is_none(), "DevTools rejected {method}");
                 return Ok(v);
@@ -438,30 +556,56 @@ impl Cdp {
     /// Asks the browser for its cookies.
     fn cookies(&mut self) -> Result<Vec<Value>> {
         let v = self.call("Storage.getCookies")?;
-        Ok(v.pointer("/result/cookies").and_then(Value::as_array).cloned().unwrap_or_default())
+        Ok(v.pointer("/result/cookies")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
     }
 
     /// The selected channel comes from the YouTube page in this temporary profile.
     fn selected_page_id(&mut self) -> Result<Option<String>> {
         let tabs = self.call("Target.getTargets")?;
-        let target = tabs.pointer("/result/targetInfos").and_then(Value::as_array)
-            .and_then(|tabs| tabs.iter().find(|tab| {
-                tab.get("type").and_then(Value::as_str) == Some("page")
-                    && tab.get("url").and_then(Value::as_str).is_some_and(|url| url == ORIGIN || url.starts_with("https://www.youtube.com/"))
-            }))
-            .and_then(|tab| tab.get("targetId")).and_then(Value::as_str)
+        let target = tabs
+            .pointer("/result/targetInfos")
+            .and_then(Value::as_array)
+            .and_then(|tabs| {
+                tabs.iter().find(|tab| {
+                    tab.get("type").and_then(Value::as_str) == Some("page")
+                        && tab.get("url").and_then(Value::as_str).is_some_and(|url| {
+                            url == ORIGIN || url.starts_with("https://www.youtube.com/")
+                        })
+                })
+            })
+            .and_then(|tab| tab.get("targetId"))
+            .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("Waiting for the YouTube page"))?;
-        let attached = self.request("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None)?;
-        let target_session = attached.pointer("/result/sessionId").and_then(Value::as_str).ok_or_else(|| anyhow!("YouTube page closed"))?;
+        let attached = self.request(
+            "Target.attachToTarget",
+            json!({ "targetId": target, "flatten": true }),
+            None,
+        )?;
+        let target_session = attached
+            .pointer("/result/sessionId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("YouTube page closed"))?;
         let evaluated = self.request("Runtime.evaluate", json!({
             "expression": "(location.origin === 'https://www.youtube.com' && window.ytcfg?.get('LOGGED_IN') === true) ? (window.ytcfg.get('DELEGATED_SESSION_ID') || '') : null",
             "returnByValue": true,
         }), Some(target_session));
-        let _ = self.request("Target.detachFromTarget", json!({ "sessionId": target_session }), None);
+        let _ = self.request(
+            "Target.detachFromTarget",
+            json!({ "sessionId": target_session }),
+            None,
+        );
         let evaluated = evaluated?;
-        let id = evaluated.pointer("/result/result/value").and_then(Value::as_str)
+        let id = evaluated
+            .pointer("/result/result/value")
+            .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("Waiting for the signed-in YouTube page"))?;
-        anyhow::ensure!(id.is_empty() || valid_page_id(id), "Invalid YouTube page ID");
+        anyhow::ensure!(
+            id.is_empty() || valid_page_id(id),
+            "Invalid YouTube page ID"
+        );
         Ok((!id.is_empty()).then(|| id.to_string()))
     }
 
@@ -472,7 +616,10 @@ impl Cdp {
 
 /// The browser's ends of the pipes. Dropped once it has started, so that only the
 /// browser holds them.
-struct ChildEnds(#[allow(dead_code)] std::io::PipeReader, #[allow(dead_code)] std::io::PipeWriter);
+struct ChildEnds(
+    #[allow(dead_code)] std::io::PipeReader,
+    #[allow(dead_code)] std::io::PipeWriter,
+);
 
 fn youtube_cookies(list: &[Value]) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
@@ -481,7 +628,10 @@ fn youtube_cookies(list: &[Value]) -> BTreeMap<String, String> {
         if !(domain == "youtube.com" || domain.ends_with(".youtube.com")) {
             continue;
         }
-        if let (Some(n), Some(v)) = (c.get("name").and_then(Value::as_str), c.get("value").and_then(Value::as_str)) {
+        if let (Some(n), Some(v)) = (
+            c.get("name").and_then(Value::as_str),
+            c.get("value").and_then(Value::as_str),
+        ) {
             out.insert(n.to_string(), v.to_string());
         }
     }
@@ -490,7 +640,11 @@ fn youtube_cookies(list: &[Value]) -> BTreeMap<String, String> {
 
 /// Opens a browser window for the user to sign in to YouTube and waits until they
 /// have. Returns the account name. `cancel` stops waiting and closes the browser.
-pub fn browser_sign_in(cancel: Arc<AtomicBool>, ready: Arc<AtomicBool>, confirmed: Arc<AtomicBool>) -> Result<String> {
+pub fn browser_sign_in(
+    cancel: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
+    confirmed: Arc<AtomicBool>,
+) -> Result<String> {
     let (_, exe) = find_browser().ok_or_else(|| {
         anyhow!("No supported browser found. Install Google Chrome, Microsoft Edge, Brave or Chromium, or import a cookies.txt file instead.")
     })?;
@@ -499,7 +653,12 @@ pub fn browser_sign_in(cancel: Arc<AtomicBool>, ready: Arc<AtomicBool>, confirme
     std::fs::create_dir_all(&profile)?;
     let mut cmd = std::process::Command::new(&exe);
     cmd.arg(format!("--user-data-dir={}", profile.display()))
-        .args(["--no-first-run", "--no-default-browser-check", "--disable-sync", "--new-window"])
+        .args([
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--new-window",
+        ])
         .arg(SIGN_IN_URL);
     if let Some(p) = crate::store::proxy_setting() {
         cmd.arg(format!("--proxy-server={p}"));
@@ -524,14 +683,21 @@ pub fn browser_sign_in(cancel: Arc<AtomicBool>, ready: Arc<AtomicBool>, confirme
         let Ok(list) = cdp.cookies() else { continue };
         let cookies = youtube_cookies(&list);
         if has_login(&cookies) && cookies.contains_key("LOGIN_INFO") {
-            let Ok(page_id) = cdp.selected_page_id() else { continue };
+            let Ok(page_id) = cdp.selected_page_id() else {
+                continue;
+            };
             ready.store(true, Ordering::Relaxed);
             if !confirmed.load(Ordering::Relaxed) {
                 continue;
             }
             let Ok(list) = cdp.cookies() else { continue };
             let cookies = youtube_cookies(&list);
-            if has_login(&cookies) && cookies.contains_key("LOGIN_INFO") && cdp.selected_page_id().is_ok_and(|current| current == page_id) {
+            if has_login(&cookies)
+                && cookies.contains_key("LOGIN_INFO")
+                && cdp
+                    .selected_page_id()
+                    .is_ok_and(|current| current == page_id)
+            {
                 break Ok((cookies, page_id));
             }
         }
@@ -590,7 +756,11 @@ mod page_id_tests {
 
         let (input, output) = std::io::pipe().unwrap();
         let (send, replies) = mpsc::channel();
-        let mut cdp = Cdp { to_browser: output, replies, next_id: 0 };
+        let mut cdp = Cdp {
+            to_browser: output,
+            replies,
+            next_id: 0,
+        };
         let browser = std::thread::spawn(move || {
             let mut reader = BufReader::new(input);
             for step in 0..4 {
@@ -621,11 +791,15 @@ mod page_id_tests {
                         json!({})
                     }
                 };
-                send.send(json!({"id": request["id"], "result": result})).unwrap();
+                send.send(json!({"id": request["id"], "result": result}))
+                    .unwrap();
             }
         });
         let page_id = cdp.selected_page_id().unwrap();
-        let connected = Session { page_id, ..Default::default() };
+        let connected = Session {
+            page_id,
+            ..Default::default()
+        };
         let mut headers = Vec::new();
         add_page_id(&mut headers, &connected);
         assert_eq!(headers, vec![("X-Goog-PageId", "12345678901234567890")]);
@@ -634,7 +808,8 @@ mod page_id_tests {
 
     #[::core::prelude::v1::test]
     fn old_session_without_a_page_id_remains_valid() {
-        let old: Session = serde_json::from_value(json!({"cookies": {}, "account": "Test"})).unwrap();
+        let old: Session =
+            serde_json::from_value(json!({"cookies": {}, "account": "Test"})).unwrap();
         let mut headers = Vec::new();
         add_page_id(&mut headers, &old);
         assert!(headers.is_empty());
@@ -653,7 +828,12 @@ mod devtools_pipe_tests {
         let profile = std::env::temp_dir().join(format!("st-cdp-test-{}", std::process::id()));
         let mut cmd = std::process::Command::new(&exe);
         cmd.arg(format!("--user-data-dir={}", profile.display()))
-            .args(["--headless=new", "--no-first-run", "--no-default-browser-check", "about:blank"]);
+            .args([
+                "--headless=new",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "about:blank",
+            ]);
         let (mut cdp, ends) = super::Cdp::attach(&mut cmd).unwrap();
         let mut child = cmd.spawn().unwrap();
         drop(ends);

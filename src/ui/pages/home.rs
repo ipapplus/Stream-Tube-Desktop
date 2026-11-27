@@ -1,6 +1,6 @@
 use crate::api::innertube::{self, EXPLORE};
-use crate::i18n::{t, tf};
 use crate::api::types::*;
+use crate::i18n::{t, tf};
 use crate::store;
 use crate::ui::cards::*;
 use crate::ui::widgets::*;
@@ -19,8 +19,16 @@ static LAST_TOP: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::
 fn freshen(items: Vec<Item>) -> Vec<Item> {
     use rand::seq::SliceRandom;
     let last: std::collections::HashSet<String> = LAST_TOP.lock().iter().cloned().collect();
-    let id = |i: &Item| if let Item::Video(v) = i { Some(v.id.clone()) } else { None };
-    let (mut fresh, mut seen): (Vec<Item>, Vec<Item>) = items.into_iter().partition(|i| id(i).map(|x| !last.contains(&x)).unwrap_or(true));
+    let id = |i: &Item| {
+        if let Item::Video(v) = i {
+            Some(v.id.clone())
+        } else {
+            None
+        }
+    };
+    let (mut fresh, mut seen): (Vec<Item>, Vec<Item>) = items
+        .into_iter()
+        .partition(|i| id(i).map(|x| !last.contains(&x)).unwrap_or(true));
     let mut rng = rand::rng();
     // keep the feed's rough order but mix it within small windows
     for chunk in fresh.chunks_mut(8) {
@@ -82,7 +90,13 @@ fn recently_uploaded() -> anyhow::Result<Vec<Item>> {
     let mut videos: Vec<VideoItem> = Vec::new();
     let mut add = |p: anyhow::Result<Page>| {
         if let Ok(p) = p {
-            videos.extend(p.items.into_iter().filter_map(|i| if let Item::Video(v) = i { Some(v) } else { None }));
+            videos.extend(p.items.into_iter().filter_map(|i| {
+                if let Item::Video(v) = i {
+                    Some(v)
+                } else {
+                    None
+                }
+            }));
         }
     };
     // the personal Home feed, two pages of it, from whichever sign-in there is
@@ -101,7 +115,10 @@ fn recently_uploaded() -> anyhow::Result<Vec<Item>> {
             add(crate::api::auth::browse_continue(&t));
         }
     } else if crate::recommend::available() {
-        add(Ok(Page { items: crate::recommend::for_you(), continuation: None }));
+        add(Ok(Page {
+            items: crate::recommend::for_you(),
+            continuation: None,
+        }));
     }
     // new uploads from the subscriptions
     if crate::api::auth::signed_in() {
@@ -117,12 +134,22 @@ fn recently_uploaded() -> anyhow::Result<Vec<Item>> {
         .into_iter()
         .filter(|v| !v.is_short && !v.is_upcoming && !v.is_live)
         .filter_map(|v| {
-            let ts = v.published_ts.or_else(|| v.published_text.as_deref().and_then(crate::api::json::parse_relative_time))?;
+            let ts = v.published_ts.or_else(|| {
+                v.published_text
+                    .as_deref()
+                    .and_then(crate::api::json::parse_relative_time)
+            })?;
             (ts >= since && seen.insert(v.id.clone())).then_some((ts, v))
         })
         .collect();
     if recent.is_empty() {
-        anyhow::bail!("{}", tf!("No videos from the last {0} days in your feed yet. Sign in or subscribe to some channels to fill this up.", RECENT_DAYS));
+        anyhow::bail!(
+            "{}",
+            tf!(
+                "No videos from the last {0} days in your feed yet. Sign in or subscribe to some channels to fill this up.",
+                RECENT_DAYS
+            )
+        );
     }
     recent.sort_by(|a, b| b.0.cmp(&a.0));
     Ok(recent
@@ -158,15 +185,25 @@ enum FeedRow {
     Loading { gap: Pixels },
 }
 
-fn feed_rows(items: &[Item], settings: &store::Settings, columns: usize, width: Pixels, rem: Pixels, cx: &App) -> Vec<FeedRow> {
-    let shorts_count = ((f32::from(width + rem) / f32::from(px(200.) + rem)).ceil() as usize).clamp(1, 8);
+fn feed_rows(
+    items: &[Item],
+    settings: &store::Settings,
+    columns: usize,
+    width: Pixels,
+    rem: Pixels,
+    cx: &App,
+) -> Vec<FeedRow> {
+    let shorts_count =
+        ((f32::from(width + rem) / f32::from(px(200.) + rem)).ceil() as usize).clamp(1, 8);
     let row_gap = grid_row_gap();
     let section_gap = rem * 2.0;
     let mut cards = Vec::new();
     let mut shorts = Vec::new();
     for (index, item) in items.iter().enumerate() {
         if let Item::Video(video) = item {
-            if store::is_filtered(video, settings) || (settings.hide_watched_in_feed && is_watched(&video.id, cx)) {
+            if store::is_filtered(video, settings)
+                || (settings.hide_watched_in_feed && is_watched(&video.id, cx))
+            {
                 continue;
             }
             if video.is_short {
@@ -190,14 +227,27 @@ fn feed_rows(items: &[Item], settings: &store::Settings, columns: usize, width: 
         } else {
             px(0.)
         };
-        rows.push(FeedRow::Cards { indices: row.to_vec(), gap });
+        rows.push(FeedRow::Cards {
+            indices: row.to_vec(),
+            gap,
+        });
     }
     if !shorts.is_empty() {
-        rows.push(FeedRow::Shorts { indices: shorts, gap: if rest.is_empty() { px(0.) } else { section_gap } });
+        rows.push(FeedRow::Shorts {
+            indices: shorts,
+            gap: if rest.is_empty() { px(0.) } else { section_gap },
+        });
     }
     for (index, row) in rest.chunks(columns).enumerate() {
-        let gap = if index + 1 < rest.len().div_ceil(columns) { row_gap } else { px(0.) };
-        rows.push(FeedRow::Cards { indices: row.to_vec(), gap });
+        let gap = if index + 1 < rest.len().div_ceil(columns) {
+            row_gap
+        } else {
+            px(0.)
+        };
+        rows.push(FeedRow::Cards {
+            indices: row.to_vec(),
+            gap,
+        });
     }
     rows
 }
@@ -205,9 +255,15 @@ fn feed_rows(items: &[Item], settings: &store::Settings, columns: usize, width: 
 fn render_feed_row(row: &FeedRow, items: &[Item], card_width: Pixels, cx: &mut App) -> AnyElement {
     match row {
         FeedRow::Cards { indices, gap } => grid(
-            indices.iter().map(|&index| grid_item(&items[index], card_width, true, cx)).collect(),
-            card_width,
-        ).flex_nowrap().pb(*gap).into_any_element(),
+            indices
+                .iter()
+                .map(|&index| grid_item(&items[index], card_width, true, cx))
+                .collect(),
+            cx,
+        )
+        .flex_nowrap()
+        .pb(*gap)
+        .into_any_element(),
         FeedRow::Shorts { indices, gap } => {
             let p = pal(cx);
             div()
@@ -216,10 +272,22 @@ fn render_feed_row(row: &FeedRow, items: &[Item], card_width: Pixels, cx: &mut A
                 .w_full()
                 .gap_4()
                 .pb(*gap)
-                .child(div().flex().items_center().gap_2().child(icon("zap").text_color(p.accent)).child(section_title("Shorts", cx)))
-                .child(div().flex().gap_4().overflow_hidden().children(
-                    indices.iter().filter_map(|&index| items[index].as_video()).map(|video| shorts_card(video, px(200.), cx)),
-                ))
+                .child(
+                    div()
+                        .flex_row_dir(cx)
+                        .items_center()
+                        .gap_2()
+                        .child(icon("zap").text_color(p.accent))
+                        .child(section_title(t("Shorts"), cx)),
+                )
+                .child(
+                    div().flex_row_dir(cx).gap_4().overflow_hidden().children(
+                        indices
+                            .iter()
+                            .filter_map(|&index| items[index].as_video())
+                            .map(|video| shorts_card(video, px(200.), cx)),
+                    ),
+                )
                 .into_any_element()
         }
         FeedRow::Loading { gap } => div().pb(*gap).child(spinner(cx)).into_any_element(),
@@ -265,7 +333,12 @@ impl HomePage {
                     // the account's home feed exactly as youtube.com builds it
                     for _ in 0..2 {
                         match crate::api::web::home() {
-                            Ok(p) if !p.items.is_empty() => return Ok((freshen(p.items), p.continuation.map(|c| format!("{WEB}{c}")))),
+                            Ok(p) if !p.items.is_empty() => {
+                                return Ok((
+                                    freshen(p.items),
+                                    p.continuation.map(|c| format!("{WEB}{c}")),
+                                ));
+                            }
                             _ => std::thread::sleep(std::time::Duration::from_millis(400)),
                         }
                     }
@@ -273,15 +346,21 @@ impl HomePage {
                 if chip == 0 && crate::api::auth::signed_in() {
                     // YouTube's own recommendations for the account (a failed request is
                     // retried once before falling back, so the feed stays personal)
-                    let home = crate::api::auth::home().ok().filter(|p| !p.items.is_empty()).or_else(|| {
-                        std::thread::sleep(std::time::Duration::from_millis(400));
-                        crate::api::auth::home().ok()
-                    });
+                    let home = crate::api::auth::home()
+                        .ok()
+                        .filter(|p| !p.items.is_empty())
+                        .or_else(|| {
+                            std::thread::sleep(std::time::Duration::from_millis(400));
+                            crate::api::auth::home().ok()
+                        });
                     if let Some(p) = home {
                         if !p.items.is_empty() {
                             // shown as soon as the first page is in; the next page loads
                             // when scrolling, instead of making the start wait for it
-                            return Ok((freshen(p.items), p.continuation.map(|c| format!("{ACCOUNT}{c}"))));
+                            return Ok((
+                                freshen(p.items),
+                                p.continuation.map(|c| format!("{ACCOUNT}{c}")),
+                            ));
                         }
                     }
                 }
@@ -312,7 +391,9 @@ impl HomePage {
                     let subs = store::subscriptions();
                     if !subs.is_empty() {
                         let (mut feed, oldest) = crate::feed::cached_feed(None);
-                        let stale = oldest.map(|o| crate::api::json::now() - o > 3600).unwrap_or(true);
+                        let stale = oldest
+                            .map(|o| crate::api::json::now() - o > 3600)
+                            .unwrap_or(true);
                         if feed.is_empty() || stale {
                             feed = crate::feed::refresh(None, |_, _| {}).0;
                         }
@@ -326,12 +407,21 @@ impl HomePage {
                         let hs: Vec<_> = EXPLORE
                             .iter()
                             .take(4)
-                            .map(|(_, id)| s.spawn(move || innertube::explore(id).map(|p| p.items).unwrap_or_default()))
+                            .map(|(_, id)| {
+                                s.spawn(move || {
+                                    innertube::explore(id).map(|p| p.items).unwrap_or_default()
+                                })
+                            })
                             .collect();
-                        hs.into_iter().map(|h| h.join().unwrap_or_default()).collect()
+                        hs.into_iter()
+                            .map(|h| h.join().unwrap_or_default())
+                            .collect()
                     });
                     let mut out = Vec::new();
-                    let mut iters: Vec<_> = lists.into_iter().map(|l| l.into_iter().filter(|i| matches!(i, Item::Video(_)))).collect();
+                    let mut iters: Vec<_> = lists
+                        .into_iter()
+                        .map(|l| l.into_iter().filter(|i| matches!(i, Item::Video(_))))
+                        .collect();
                     let mut seen = std::collections::HashSet::new();
                     loop {
                         let mut any = false;
@@ -425,7 +515,14 @@ impl HomePage {
         .detach();
     }
 
-    fn sync_rows(&mut self, rows: Vec<FeedRow>, card_width: Pixels, rem: Pixels, window: &Window, cx: &Context<Self>) -> bool {
+    fn sync_rows(
+        &mut self,
+        rows: Vec<FeedRow>,
+        card_width: Pixels,
+        rem: Pixels,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> bool {
         let geometry_changed = self.row_size != (card_width, rem);
         if !geometry_changed && self.rows.as_ref() == &rows {
             return false;
@@ -439,7 +536,12 @@ impl HomePage {
         }
         if geometry_changed {
             self.scroll.remeasure();
-        } else if let Some(first_changed) = self.rows.iter().zip(&rows).position(|(old, new)| old != new) {
+        } else if let Some(first_changed) = self
+            .rows
+            .iter()
+            .zip(&rows)
+            .position(|(old, new)| old != new)
+        {
             self.scroll.remeasure_items(first_changed..shared);
         }
         self.rows = Arc::new(rows);
@@ -465,10 +567,13 @@ impl Render for HomePage {
         let rem = window.rem_size();
         let width = content_width(cx);
         let (columns, card_width) = grid_columns(width, 300.0, rem);
-        let mut chips = div().flex().gap_3().py_3().px_6().bg(p.bg).child(
+        let mut chips = div().flex_row_dir(cx).gap_3().py_3().px_6().bg(p.bg).child(
             chip(
                 "chip-all",
-                if crate::api::auth::signed_in() || crate::api::web::connected() || !store::subscriptions().is_empty() {
+                if crate::api::auth::signed_in()
+                    || crate::api::web::connected()
+                    || !store::subscriptions().is_empty()
+                {
                     t("All")
                 } else if crate::recommend::available() {
                     t("For you")
@@ -478,27 +583,48 @@ impl Render for HomePage {
                 self.chip == 0,
                 cx,
             )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.chip = 0;
-                    this.load(cx);
-                })),
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.chip = 0;
+                this.load(cx);
+            })),
         );
-        chips = chips.child(chip("chip-recent", t("Recently uploaded"), self.chip == RECENT, cx).on_click(cx.listener(|this, _, _, cx| {
-            this.chip = RECENT;
-            this.load(cx);
-        })));
+        chips = chips.child(
+            chip(
+                "chip-recent",
+                t("Recently uploaded"),
+                self.chip == RECENT,
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.chip = RECENT;
+                this.load(cx);
+            })),
+        );
         if !s.hide_explore {
             for (i, (name, _)) in EXPLORE.iter().enumerate() {
-                chips = chips.child(chip(SharedString::from(format!("chip-{i}")), t(name), self.chip == i + 1, cx).on_click(cx.listener(
-                    move |this, _, _, cx| {
+                chips = chips.child(
+                    chip(
+                        SharedString::from(format!("chip-{i}")),
+                        t(name),
+                        self.chip == i + 1,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.chip = i + 1;
                         this.load(cx);
-                    },
-                )));
+                    })),
+                );
             }
         }
         let message = |content: AnyElement| {
-            div().absolute().inset_0().px_6().pt_2().pb_24().child(content).into_any_element()
+            div()
+                .absolute()
+                .inset_0()
+                .px_6()
+                .pt_2()
+                .pb_24()
+                .child(content)
+                .into_any_element()
         };
         let body: AnyElement = match &self.items {
             Load::Loading => message(spinner(cx).into_any_element()),
@@ -511,20 +637,32 @@ impl Render for HomePage {
                 } else {
                     if self.loading_more {
                         rows.push(FeedRow::Loading { gap: rem * 6.0 });
-                    } else if let Some(FeedRow::Cards { gap, .. } | FeedRow::Shorts { gap, .. }) = rows.last_mut() {
+                    } else if let Some(FeedRow::Cards { gap, .. } | FeedRow::Shorts { gap, .. }) =
+                        rows.last_mut()
+                    {
                         // Include the bottom margin in the last item's measured height
                         // so jumping to the end also reveals the last card's metadata.
                         *gap += rem * 6.0;
                     }
                     let changed = self.sync_rows(rows, card_width, rem, window, cx);
-                    if !changed && !self.loading_more && self.continuation.is_some() && near_bottom(&self.scroll, 900.0) {
+                    if !changed
+                        && !self.loading_more
+                        && self.continuation.is_some()
+                        && near_bottom(&self.scroll, 900.0)
+                    {
                         self.loading_more = true;
                         cx.defer_in_entity(|page, cx| page.load_more(cx));
                         cx.notify();
                     }
                     let rows = self.rows.clone();
-                    list(self.scroll.clone(), move |index, _, cx| render_feed_row(&rows[index], &items, card_width, cx))
-                        .absolute().inset_0().px_6().pt_2().into_any_element()
+                    list(self.scroll.clone(), move |index, _, cx| {
+                        render_feed_row(&rows[index], &items, card_width, cx)
+                    })
+                    .absolute()
+                    .inset_0()
+                    .px_6()
+                    .pt_2()
+                    .into_any_element()
                 }
             }
         };
@@ -533,6 +671,12 @@ impl Render for HomePage {
             .flex()
             .flex_col()
             .child(chips.overflow_hidden())
-            .child(scroll_viewport("home-scroll", &self.scroll, body, window, cx))
+            .child(scroll_viewport(
+                "home-scroll",
+                &self.scroll,
+                body,
+                window,
+                cx,
+            ))
     }
 }

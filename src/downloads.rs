@@ -2,8 +2,8 @@
 pub(crate) mod transcript;
 
 use crate::api::streams::{self, hide_window};
-use crate::i18n::{t as translate, tf};
 use crate::api::types::{CaptionTrack, VideoItem};
+use crate::i18n::{t as translate, tf};
 use crate::store;
 use crate::ui::toast;
 use gpui_kit::*;
@@ -42,7 +42,8 @@ pub struct Downloads {
 
 impl Global for Downloads {}
 
-pub const TRANSCRIPTS: &[(&str, &str)] = &[("txt", "Transcript (.txt)"), ("srt", "Subtitles (.srt)")];
+pub const TRANSCRIPTS: &[(&str, &str)] =
+    &[("txt", "Transcript (.txt)"), ("srt", "Subtitles (.srt)")];
 
 pub const FORMATS: &[(&str, &str)] = &[
     ("1080", "1080p (recommended)"),
@@ -58,9 +59,19 @@ pub fn start_many(videos: Vec<VideoItem>, cx: &mut App) {
         return;
     }
     if !store::settings_snapshot().download_dir_chosen {
-        let rx = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some(translate("Save downloads here").into()) });
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(translate("Save downloads here").into()),
+        });
         cx.spawn(async move |cx| {
-            let picked = rx.await.ok().and_then(|r| r.ok()).flatten().and_then(|p| p.into_iter().next());
+            let picked = rx
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()
+                .and_then(|p| p.into_iter().next());
             let _ = cx.update(|cx| match picked {
                 Some(dir) => {
                     store::update_settings(|s| {
@@ -88,7 +99,12 @@ pub fn start(video: VideoItem, format: Option<String>, cx: &mut App) {
     start_with_track(video, format, None, cx);
 }
 
-pub(crate) fn start_with_track(video: VideoItem, format: Option<String>, track: Option<CaptionTrack>, cx: &mut App) {
+pub(crate) fn start_with_track(
+    video: VideoItem,
+    format: Option<String>,
+    track: Option<CaptionTrack>,
+    cx: &mut App,
+) {
     // First download: ask where to save (once), like a browser does.
     if !store::settings_snapshot().download_dir_chosen {
         let rx = cx.prompt_for_paths(PathPromptOptions {
@@ -98,7 +114,12 @@ pub(crate) fn start_with_track(video: VideoItem, format: Option<String>, track: 
             prompt: Some(translate("Save downloads here").into()),
         });
         cx.spawn(async move |cx| {
-            let picked = rx.await.ok().and_then(|r| r.ok()).flatten().and_then(|p| p.into_iter().next());
+            let picked = rx
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()
+                .and_then(|p| p.into_iter().next());
             let _ = cx.update(|cx| match picked {
                 Some(dir) => {
                     store::update_settings(|s| {
@@ -133,13 +154,21 @@ pub(crate) fn start_with_track(video: VideoItem, format: Option<String>, track: 
                         fetch_ytdlp(cx);
                     }),
                 ),
-                (translate("Download 360p").into(), Arc::new(move |_, cx: &mut App| start(v2.clone(), Some("single".into()), cx))),
+                (
+                    translate("Download 360p").into(),
+                    Arc::new(move |_, cx: &mut App| start(v2.clone(), Some("single".into()), cx)),
+                ),
             ],
         );
         return;
     }
     // separate video + audio streams need FFmpeg to be joined into one file
-    if !transcript && fmt != "audio" && fmt != "single" && streams::ytdlp_path().is_some() && ffmpeg_path().is_none() {
+    if !transcript
+        && fmt != "audio"
+        && fmt != "single"
+        && streams::ytdlp_path().is_some()
+        && ffmpeg_path().is_none()
+    {
         if FFMPEG_FETCHING.load(Ordering::SeqCst) {
             // queued behind the FFmpeg download
             PENDING.lock().push((video, Some(fmt)));
@@ -157,7 +186,10 @@ pub(crate) fn start_with_track(video: VideoItem, format: Option<String>, track: 
                         fetch_ffmpeg(cx);
                     }),
                 ),
-                (translate("Download 360p").into(), Arc::new(move |_, cx: &mut App| start(v2.clone(), Some("single".into()), cx))),
+                (
+                    translate("Download 360p").into(),
+                    Arc::new(move |_, cx: &mut App| start(v2.clone(), Some("single".into()), cx)),
+                ),
             ],
         );
         return;
@@ -185,9 +217,19 @@ pub(crate) fn start_with_track(video: VideoItem, format: Option<String>, track: 
         let srt = job.format == "srt";
         cx.spawn(async move |cx| {
             if completion.await.is_ok() {
-                let _ = cx.update(|cx| toast(cx, if srt { tf!("Subtitles saved · {0}", name) } else { tf!("Transcript saved · {0}", name) }));
+                let _ = cx.update(|cx| {
+                    toast(
+                        cx,
+                        if srt {
+                            tf!("Subtitles saved · {0}", name)
+                        } else {
+                            tf!("Transcript saved · {0}", name)
+                        },
+                    )
+                });
             }
-        }).detach();
+        })
+        .detach();
     }
     std::thread::spawn(move || {
         let update = |f: &dyn Fn(&mut Job)| {
@@ -201,7 +243,11 @@ pub(crate) fn start_with_track(video: VideoItem, format: Option<String>, track: 
                 update(&|j| j.status = JobStatus::Cancelled);
                 return;
             }
-            let running = jobs2.lock().iter().filter(|j| j.status == JobStatus::Running).count();
+            let running = jobs2
+                .lock()
+                .iter()
+                .filter(|j| j.status == JobStatus::Running)
+                .count();
             if running < 3 {
                 break;
             }
@@ -240,20 +286,25 @@ fn ensure_ticking(cx: &mut App) {
     cx.default_global::<Downloads>().ticking = true;
     cx.spawn(async move |cx| {
         loop {
-            cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
-            let active = cx
-                .update(|cx| {
-                    cx.refresh_windows();
-                    let d = cx.default_global::<Downloads>();
-                    let active = d.jobs.lock().iter().any(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running));
-                    if !active {
-                        d.ticking = false;
-                    }
-                    if !active {
-                        save_history(cx);
-                    }
-                    active
-                });
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let active = cx.update(|cx| {
+                cx.refresh_windows();
+                let d = cx.default_global::<Downloads>();
+                let active = d
+                    .jobs
+                    .lock()
+                    .iter()
+                    .any(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running));
+                if !active {
+                    d.ticking = false;
+                }
+                if !active {
+                    save_history(cx);
+                }
+                active
+            });
             if !active {
                 break;
             }
@@ -264,7 +315,13 @@ fn ensure_ticking(cx: &mut App) {
 
 fn sanitize(s: &str) -> String {
     s.chars()
-        .map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c })
+        .map(|c| {
+            if "\\/:*?\"<>|".contains(c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect::<String>()
         .trim()
         .chars()
@@ -272,9 +329,18 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
-fn run_job(job: &Job, track: Option<&CaptionTrack>, cancel: &AtomicBool, progress: &dyn Fn(f32, &str)) -> anyhow::Result<String> {
+fn run_job(
+    job: &Job,
+    track: Option<&CaptionTrack>,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(f32, &str),
+) -> anyhow::Result<String> {
     let s = store::settings_snapshot();
-    let dir = std::path::PathBuf::from(if s.download_dir.is_empty() { ".".into() } else { s.download_dir.clone() });
+    let dir = std::path::PathBuf::from(if s.download_dir.is_empty() {
+        ".".into()
+    } else {
+        s.download_dir.clone()
+    });
     std::fs::create_dir_all(&dir)?;
     if TRANSCRIPTS.iter().any(|(format, _)| *format == job.format) {
         return transcript::export(job, &dir, track, cancel);
@@ -302,17 +368,47 @@ fn run_job(job: &Job, track: Option<&CaptionTrack>, cancel: &AtomicBool, progres
                 // videos made for kids are refused to yt-dlp's default clients;
                 // the iOS client still serves them (its HLS formats need no PO token)
                 progress(0.0, translate("Retrying…"));
-                match ytdlp_run(&bin, &dir, &url, &fmt, &s, &["--extractor-args", YTDLP_IOS], None, cancel, progress) {
+                match ytdlp_run(
+                    &bin,
+                    &dir,
+                    &url,
+                    &fmt,
+                    &s,
+                    &["--extractor-args", YTDLP_IOS],
+                    None,
+                    cancel,
+                    progress,
+                ) {
                     Err(e2) if e2.to_string() == "cancelled" => Err(e2),
                     Err(_) if !cancel.load(Ordering::SeqCst) => {
                         // yt-dlp found no formats either: download the HLS manifest the
                         // app itself plays these videos from
                         match streams::ios_hls_manifest(&job.video.id) {
                             Ok(manifest) => {
-                                let fmt = if job.format == "single" { "bv*+ba/b".to_string() } else { fmt.clone() };
-                                let name = format!("{} [{}]", sanitize(&job.video.title).trim_end_matches('.').replace('%', "%%"), job.video.id);
-                                ytdlp_run(&bin, &dir, &manifest, &fmt, &s, &[], Some(&name), cancel, progress)
-                                    .map_err(|e3| if e3.to_string() == "cancelled" { e3 } else { e })
+                                let fmt = if job.format == "single" {
+                                    "bv*+ba/b".to_string()
+                                } else {
+                                    fmt.clone()
+                                };
+                                let name = format!(
+                                    "{} [{}]",
+                                    sanitize(&job.video.title)
+                                        .trim_end_matches('.')
+                                        .replace('%', "%%"),
+                                    job.video.id
+                                );
+                                ytdlp_run(
+                                    &bin,
+                                    &dir,
+                                    &manifest,
+                                    &fmt,
+                                    &s,
+                                    &[],
+                                    Some(&name),
+                                    cancel,
+                                    progress,
+                                )
+                                .map_err(|e3| if e3.to_string() == "cancelled" { e3 } else { e })
                             }
                             Err(_) => Err(e),
                         }
@@ -333,13 +429,27 @@ pub const YTDLP_IOS: &str = "youtube:player_client=ios;formats=missing_pot";
 /// Whether a failed yt-dlp run is worth retrying through the iOS client.
 pub fn retry_with_ios(err: &str) -> bool {
     let e = err.to_lowercase();
-    !e.contains("cancelled") && (e.contains("not available") || e.contains("unavailable") || e.contains("requested format") || e.contains("reloaded"))
+    !e.contains("cancelled")
+        && (e.contains("not available")
+            || e.contains("unavailable")
+            || e.contains("requested format")
+            || e.contains("reloaded"))
 }
 
 /// `name`: the file name without extension, when the URL isn't a YouTube page
 /// (yt-dlp would otherwise name the file after the manifest).
 #[allow(clippy::too_many_arguments)]
-fn ytdlp_run(bin: &str, dir: &std::path::Path, url: &str, fmt: &str, s: &store::Settings, extra: &[&str], name: Option<&str>, cancel: &AtomicBool, progress: &dyn Fn(f32, &str)) -> anyhow::Result<String> {
+fn ytdlp_run(
+    bin: &str,
+    dir: &std::path::Path,
+    url: &str,
+    fmt: &str,
+    s: &store::Settings,
+    extra: &[&str],
+    name: Option<&str>,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(f32, &str),
+) -> anyhow::Result<String> {
     {
         let mut cmd = Command::new(bin);
         cmd.args(extra);
@@ -355,17 +465,27 @@ fn ytdlp_run(bin: &str, dir: &std::path::Path, url: &str, fmt: &str, s: &store::
         }
         // --print makes yt-dlp quiet, so progress is asked for explicitly in a fixed format.
         // Fragments and chunks download in parallel, which is much faster than one stream.
-        cmd.args(["--newline", "--no-warnings", "--no-playlist", "--progress", "--progress-delta", "0.4"])
-            .args(["--progress-template", "download:[dl] %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s"])
-            .args(["-N", "8", "--http-chunk-size", "10M", "-f", fmt, "-o"])
-            .arg(match name {
-                Some(n) => dir.join(format!("{n}.%(ext)s")),
-                None => dir.join("%(title).150B [%(id)s].%(ext)s"),
-            })
-            .args(["--print", "after_move:filepath"])
-            .arg(url)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.args([
+            "--newline",
+            "--no-warnings",
+            "--no-playlist",
+            "--progress",
+            "--progress-delta",
+            "0.4",
+        ])
+        .args([
+            "--progress-template",
+            "download:[dl] %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
+        ])
+        .args(["-N", "8", "--http-chunk-size", "10M", "-f", fmt, "-o"])
+        .arg(match name {
+            Some(n) => dir.join(format!("{n}.%(ext)s")),
+            None => dir.join("%(title).150B [%(id)s].%(ext)s"),
+        })
+        .args(["--print", "after_move:filepath"])
+        .arg(url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         if s.sponsorblock && ffmpeg_path().is_some() {
             cmd.args(["--sponsorblock-mark", "all"]);
         }
@@ -390,16 +510,33 @@ fn ytdlp_run(bin: &str, dir: &std::path::Path, url: &str, fmt: &str, s: &store::
             }
             if let Some(rest) = line.strip_prefix("[dl]") {
                 let mut parts = rest.trim().split('|');
-                let pct = parts.next().and_then(|p| p.trim().trim_end_matches('%').parse::<f32>().ok()).unwrap_or(0.0);
+                let pct = parts
+                    .next()
+                    .and_then(|p| p.trim().trim_end_matches('%').parse::<f32>().ok())
+                    .unwrap_or(0.0);
                 let speed = parts.next().unwrap_or("").trim();
                 let eta = parts.next().unwrap_or("").trim();
                 if pct + 20.0 < last_pct {
                     phase += 1;
                 }
                 last_pct = pct;
-                let overall = if phase == 0 { pct / 100.0 * 0.9 } else { 0.9 + pct / 100.0 * 0.1 };
+                let overall = if phase == 0 {
+                    pct / 100.0 * 0.9
+                } else {
+                    0.9 + pct / 100.0 * 0.1
+                };
                 let what = if phase == 0 { "" } else { translate("Audio, ") };
-                let detail = if pct >= 100.0 { translate("Finishing…").to_string() } else { tf!("{0}{1}%, {2}, {3} left", what, format_args!("{:.0}", pct), speed, eta) };
+                let detail = if pct >= 100.0 {
+                    translate("Finishing…").to_string()
+                } else {
+                    tf!(
+                        "{0}{1}%, {2}, {3} left",
+                        what,
+                        format_args!("{:.0}", pct),
+                        speed,
+                        eta
+                    )
+                };
                 progress(overall.min(0.99), &detail);
             } else if !line.starts_with('[') && !line.trim().is_empty() {
                 final_path = line.trim().to_string();
@@ -408,27 +545,62 @@ fn ytdlp_run(bin: &str, dir: &std::path::Path, url: &str, fmt: &str, s: &store::
         let status = child.wait()?;
         let err = err_reader.join().unwrap_or_default();
         if !status.success() {
-            let last = err.lines().rev().find(|l| l.contains("ERROR")).or(err.lines().last()).unwrap_or("yt-dlp failed").to_string();
+            let last = err
+                .lines()
+                .rev()
+                .find(|l| l.contains("ERROR"))
+                .or(err.lines().last())
+                .unwrap_or("yt-dlp failed")
+                .to_string();
             if last.contains("confirm you") && last.contains("bot") {
-                anyhow::bail!("YouTube asked for a bot check. Turn on \"Use IPv4 only\" in Settings → Network, or update yt-dlp.");
+                anyhow::bail!(
+                    "YouTube asked for a bot check. Turn on \"Use IPv4 only\" in Settings → Network, or update yt-dlp."
+                );
             }
             anyhow::bail!("{}", last.trim_start_matches("ERROR: ").trim());
         }
-        Ok(if final_path.is_empty() { dir.to_string_lossy().into_owned() } else { final_path })
+        Ok(if final_path.is_empty() {
+            dir.to_string_lossy().into_owned()
+        } else {
+            final_path
+        })
     }
 }
 
 /// Without yt-dlp: progressive (muxed) stream or audio-only stream.
-fn native_download(job: &Job, dir: &std::path::Path, cancel: &AtomicBool, progress: &dyn Fn(f32, &str)) -> anyhow::Result<String> {
+fn native_download(
+    job: &Job,
+    dir: &std::path::Path,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(f32, &str),
+) -> anyhow::Result<String> {
     let info = streams::get_streams(&job.video.id)?;
     let (fmt, ext) = if job.format == "audio" {
-        let a = info.audio.iter().find(|a| a.mime.contains("mp4")).or(info.audio.first()).ok_or_else(|| anyhow::anyhow!("no audio stream"))?;
-        (a.clone(), if a.mime.contains("mp4") { "m4a" } else { "webm" })
+        let a = info
+            .audio
+            .iter()
+            .find(|a| a.mime.contains("mp4"))
+            .or(info.audio.first())
+            .ok_or_else(|| anyhow::anyhow!("no audio stream"))?;
+        (
+            a.clone(),
+            if a.mime.contains("mp4") {
+                "m4a"
+            } else {
+                "webm"
+            },
+        )
     } else {
-        let m = info.muxed.iter().max_by_key(|m| m.height).ok_or_else(|| anyhow::anyhow!("no combined stream (install yt-dlp for high quality downloads)"))?;
+        let m = info.muxed.iter().max_by_key(|m| m.height).ok_or_else(|| {
+            anyhow::anyhow!("no combined stream (install yt-dlp for high quality downloads)")
+        })?;
         (m.clone(), "mp4")
     };
-    let path = dir.join(format!("{} [{}].{ext}", sanitize(&info.title), job.video.id));
+    let path = dir.join(format!(
+        "{} [{}].{ext}",
+        sanitize(&info.title),
+        job.video.id
+    ));
     let mut f = std::fs::File::create(&path)?;
     crate::api::http::download_to(&fmt.url, &mut f, |done, total| {
         let p = total.map(|t| done as f32 / t as f32).unwrap_or(0.0);
@@ -439,7 +611,13 @@ fn native_download(job: &Job, dir: &std::path::Path, cancel: &AtomicBool, progre
 }
 
 pub fn cancel(id: u64, cx: &mut App) {
-    if let Some(j) = cx.default_global::<Downloads>().jobs.lock().iter().find(|j| j.id == id) {
+    if let Some(j) = cx
+        .default_global::<Downloads>()
+        .jobs
+        .lock()
+        .iter()
+        .find(|j| j.id == id)
+    {
         j.cancel.store(true, Ordering::SeqCst);
     }
 }
@@ -449,13 +627,19 @@ pub fn open_external(id: &str, cx: &mut App) {
 }
 
 pub fn open_external_at(id: &str, time: f64, cx: &mut App) {
-    let custom = store::settings_snapshot().external_player.trim().to_string();
+    let custom = store::settings_snapshot()
+        .external_player
+        .trim()
+        .to_string();
     let id = id.to_string();
     toast(cx, translate("Opening in your video player…"));
     cx.spawn(async move |cx| {
         let res = crate::ui::blocking(move || launch_external(&id, time, &custom)).await;
         let _ = cx.update(|cx| match res {
-            Ok(name) => toast(cx, tf!("Playing in {0}. Keep Stream Tube open while it plays", name)),
+            Ok(name) => toast(
+                cx,
+                tf!("Playing in {0}. Keep Stream Tube open while it plays", name),
+            ),
             Err(e) => toast(cx, tf!("Couldn't open a video player: {0}", e)),
         });
     })
@@ -465,21 +649,34 @@ pub fn open_external_at(id: &str, time: f64, cx: &mut App) {
 /// The external player "Automatic" would use: VLC or mpv when installed.
 pub fn detect_player() -> Option<(&'static str, String)> {
     let on_path = |exe: &str| -> Option<String> {
-        let name = if cfg!(windows) { format!("{exe}.exe") } else { exe.to_string() };
-        std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(&name)).find(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned())
+        let name = if cfg!(windows) {
+            format!("{exe}.exe")
+        } else {
+            exe.to_string()
+        };
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|d| d.join(&name))
+            .find(|p| p.is_file())
+            .map(|p| p.to_string_lossy().into_owned())
     };
     let mut found: Vec<(&'static str, String)> = Vec::new();
     if cfg!(windows) {
         for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
             if let Some(root) = std::env::var_os(var) {
-                let p = std::path::Path::new(&root).join("VideoLAN").join("VLC").join("vlc.exe");
+                let p = std::path::Path::new(&root)
+                    .join("VideoLAN")
+                    .join("VLC")
+                    .join("vlc.exe");
                 if p.is_file() {
                     found.push(("VLC", p.to_string_lossy().into_owned()));
                 }
             }
         }
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-            let p = std::path::Path::new(&local).join("Programs").join("mpv").join("mpv.exe");
+            let p = std::path::Path::new(&local)
+                .join("Programs")
+                .join("mpv")
+                .join("mpv.exe");
             if p.is_file() {
                 found.push(("mpv", p.to_string_lossy().into_owned()));
             }
@@ -499,20 +696,36 @@ fn launch_external(id: &str, time: f64, custom: &str) -> anyhow::Result<String> 
     let s = store::settings_snapshot();
     // H.264 + AAC plays in every player
     let (v, a) = streams::pick_formats(&info, s.default_quality, "h264", None);
-    let local = |f: &crate::api::types::StreamFormat| crate::player::proxy::local_url(&f.url, f.content_length, &f.mime);
+    let local = |f: &crate::api::types::StreamFormat| {
+        crate::player::proxy::local_url(&f.url, f.content_length, &f.mime)
+    };
     let live = info.is_live || (info.video.is_empty() && info.muxed.is_empty());
-    let hls = info.hls_url.as_deref().map(|u| crate::player::proxy::local_hls(u, s.default_quality, None));
+    let hls = info
+        .hls_url
+        .as_deref()
+        .map(|u| crate::player::proxy::local_hls(u, s.default_quality, None));
     let (video, audio) = if live || info.hls_only {
-        (hls.clone().ok_or_else(|| anyhow::anyhow!("no stream for this video"))?, None)
+        (
+            hls.clone()
+                .ok_or_else(|| anyhow::anyhow!("no stream for this video"))?,
+            None,
+        )
     } else {
         match (v, a) {
             (Some(v), a) => (local(v), a.map(local)),
             (None, Some(a)) => (local(a), None),
-            _ => (info.muxed.last().map(local).ok_or_else(|| anyhow::anyhow!("no stream for this video"))?, None),
+            _ => (
+                info.muxed
+                    .last()
+                    .map(local)
+                    .ok_or_else(|| anyhow::anyhow!("no stream for this video"))?,
+                None,
+            ),
         }
     };
     // at the very end there's nothing left to play: start from the top
-    let start = (time > 1.0 && (info.length_secs == 0 || time + 5.0 < info.length_secs as f64)).then_some(time as u64);
+    let start = (time > 1.0 && (info.length_secs == 0 || time + 5.0 < info.length_secs as f64))
+        .then_some(time as u64);
     let title = info.title.clone();
 
     let (name, exe) = if custom.is_empty() {
@@ -521,7 +734,10 @@ fn launch_external(id: &str, time: f64, custom: &str) -> anyhow::Result<String> 
             None => return open_with_default(&info, start),
         }
     } else {
-        let n = std::path::Path::new(custom).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| custom.to_string());
+        let n = std::path::Path::new(custom)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| custom.to_string());
         (n, custom.to_string())
     };
     let lower = exe.to_lowercase();
@@ -564,15 +780,28 @@ fn launch_external(id: &str, time: f64, custom: &str) -> anyhow::Result<String> 
 
 /// No known player installed: a playlist with one stream (video and sound
 /// together), opened by whatever the system uses for playlists.
-fn open_with_default(info: &crate::api::types::StreamInfo, start: Option<u64>) -> anyhow::Result<String> {
+fn open_with_default(
+    info: &crate::api::types::StreamInfo,
+    start: Option<u64>,
+) -> anyhow::Result<String> {
     let s = store::settings_snapshot();
     let url = if info.is_live || info.hls_only {
-        info.hls_url.as_deref().map(|u| crate::player::proxy::local_hls(u, s.default_quality, None))
+        info.hls_url
+            .as_deref()
+            .map(|u| crate::player::proxy::local_hls(u, s.default_quality, None))
     } else {
-        info.muxed.last().map(|m| crate::player::proxy::local_url(&m.url, m.content_length, &m.mime))
+        info.muxed
+            .last()
+            .map(|m| crate::player::proxy::local_url(&m.url, m.content_length, &m.mime))
     }
-    .ok_or_else(|| anyhow::anyhow!("this video has no stream a default player can open. Install VLC or mpv"))?;
-    let mut m3u = format!("#EXTM3U\n#EXTINF:{},{}\n", info.length_secs, info.title.replace(['\n', '\r'], " "));
+    .ok_or_else(|| {
+        anyhow::anyhow!("this video has no stream a default player can open. Install VLC or mpv")
+    })?;
+    let mut m3u = format!(
+        "#EXTM3U\n#EXTINF:{},{}\n",
+        info.length_secs,
+        info.title.replace(['\n', '\r'], " ")
+    );
     if let Some(t) = start {
         m3u.push_str(&format!("#EXTVLCOPT:start-time={t}\n"));
     }
@@ -588,24 +817,36 @@ fn open_with_default(info: &crate::api::types::StreamInfo, start: Option<u64>) -
 
 /// Removes a finished/failed job from the list (the file stays).
 pub fn remove(id: u64, cx: &mut App) {
-    cx.default_global::<Downloads>().jobs.lock().retain(|j| j.id != id || matches!(j.status, JobStatus::Running | JobStatus::Queued));
+    cx.default_global::<Downloads>()
+        .jobs
+        .lock()
+        .retain(|j| j.id != id || matches!(j.status, JobStatus::Running | JobStatus::Queued));
     save_history(cx);
     cx.refresh_windows();
 }
 
 /// Clears every finished/failed/cancelled entry.
 pub fn clear_history(cx: &mut App) {
-    cx.default_global::<Downloads>().jobs.lock().retain(|j| matches!(j.status, JobStatus::Running | JobStatus::Queued));
+    cx.default_global::<Downloads>()
+        .jobs
+        .lock()
+        .retain(|j| matches!(j.status, JobStatus::Running | JobStatus::Queued));
     save_history(cx);
     cx.refresh_windows();
 }
 
 /// Deletes the downloaded file and removes the entry.
 pub fn delete_file(id: u64, cx: &mut App) {
-    let path = cx.default_global::<Downloads>().jobs.lock().iter().find(|j| j.id == id).and_then(|j| match &j.status {
-        JobStatus::Done(p) => Some(p.clone()),
-        _ => None,
-    });
+    let path = cx
+        .default_global::<Downloads>()
+        .jobs
+        .lock()
+        .iter()
+        .find(|j| j.id == id)
+        .and_then(|j| match &j.status {
+            JobStatus::Done(p) => Some(p.clone()),
+            _ => None,
+        });
     if let Some(p) = path {
         match std::fs::remove_file(&p) {
             Ok(()) => toast(cx, translate("Deleted from disk")),
@@ -630,14 +871,23 @@ pub fn resolve_output(path: &str, video_id: &str) -> Option<String> {
     if matches!(p.extension().and_then(|e| e.to_str()), Some("txt" | "srt")) {
         return None; // A video with the same ID is not a missing transcript.
     }
-    let dir = if p.is_dir() { p.to_path_buf() } else { p.parent()?.to_path_buf() };
+    let dir = if p.is_dir() {
+        p.to_path_buf()
+    } else {
+        p.parent()?.to_path_buf()
+    };
     let tag = format!("[{video_id}]");
     std::fs::read_dir(&dir)
         .ok()?
         .filter_map(Result::ok)
         .filter(|e| {
             let n = e.file_name().to_string_lossy().into_owned();
-            n.contains(&tag) && !n.ends_with(".txt") && !n.ends_with(".srt") && !n.ends_with(".part") && !n.ends_with(".ytdl") && !n.ends_with(".tmp")
+            n.contains(&tag)
+                && !n.ends_with(".txt")
+                && !n.ends_with(".srt")
+                && !n.ends_with(".part")
+                && !n.ends_with(".ytdl")
+                && !n.ends_with(".tmp")
         })
         .filter_map(|e| Some((e.metadata().ok()?.len(), e.path())))
         .max_by_key(|(len, _)| *len)
@@ -646,12 +896,19 @@ pub fn resolve_output(path: &str, video_id: &str) -> Option<String> {
 
 /// Opens a downloaded file with the system's default player.
 pub fn open_file(path: &str, cx: &mut App) {
-    let Some(path) = std::path::Path::new(path).is_file().then(|| path.to_string()).or_else(|| {
-        // find the id from the "[id]" in the file name
-        let name = std::path::Path::new(path).file_name()?.to_string_lossy().into_owned();
-        let id = name.rsplit_once('[')?.1.split_once(']')?.0.to_string();
-        resolve_output(path, &id)
-    }) else {
+    let Some(path) = std::path::Path::new(path)
+        .is_file()
+        .then(|| path.to_string())
+        .or_else(|| {
+            // find the id from the "[id]" in the file name
+            let name = std::path::Path::new(path)
+                .file_name()?
+                .to_string_lossy()
+                .into_owned();
+            let id = name.rsplit_once('[')?.1.split_once(']')?.0.to_string();
+            resolve_output(path, &id)
+        })
+    else {
         toast(cx, translate("File not found (moved or deleted)"));
         return;
     };
@@ -672,9 +929,14 @@ pub fn open_file(path: &str, cx: &mut App) {
 
 /// (active jobs, overall progress 0..1 of active jobs)
 pub fn summary(cx: &App) -> (usize, f32) {
-    let Some(d) = cx.try_global::<Downloads>() else { return (0, 0.0) };
+    let Some(d) = cx.try_global::<Downloads>() else {
+        return (0, 0.0);
+    };
     let jobs = d.jobs.lock();
-    let active: Vec<&Job> = jobs.iter().filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running)).collect();
+    let active: Vec<&Job> = jobs
+        .iter()
+        .filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running))
+        .collect();
     if active.is_empty() {
         return (0, 0.0);
     }
@@ -699,8 +961,18 @@ fn save_history(cx: &mut App) {
     let saved: Vec<Saved> = jobs
         .iter()
         .filter_map(|j| match &j.status {
-            JobStatus::Done(p) => Some(Saved { video: j.video.clone(), format: j.format.clone(), path: Some(p.clone()), error: None }),
-            JobStatus::Failed(e) => Some(Saved { video: j.video.clone(), format: j.format.clone(), path: None, error: Some(e.clone()) }),
+            JobStatus::Done(p) => Some(Saved {
+                video: j.video.clone(),
+                format: j.format.clone(),
+                path: Some(p.clone()),
+                error: None,
+            }),
+            JobStatus::Failed(e) => Some(Saved {
+                video: j.video.clone(),
+                format: j.format.clone(),
+                path: None,
+                error: Some(e.clone()),
+            }),
             _ => None,
         })
         .collect();
@@ -711,8 +983,12 @@ fn save_history(cx: &mut App) {
 
 /// Loads the saved download list at startup.
 pub fn load_history(cx: &mut App) {
-    let Some(raw) = store::kv_get(HISTORY_KEY) else { return };
-    let Ok(saved) = serde_json::from_str::<Vec<Saved>>(&raw) else { return };
+    let Some(raw) = store::kv_get(HISTORY_KEY) else {
+        return;
+    };
+    let Ok(saved) = serde_json::from_str::<Vec<Saved>>(&raw) else {
+        return;
+    };
     let d = cx.default_global::<Downloads>();
     let mut jobs = d.jobs.lock();
     for s in saved {
@@ -742,7 +1018,11 @@ static PENDING: Mutex<Vec<(VideoItem, Option<String>)>> = Mutex::new(Vec::new())
 const FFMPEG_ASSET: (&str, &str, &str) = (
     "yt-dlp/FFmpeg-Builds",
     "tags/latest",
-    if cfg!(windows) { "ffmpeg-master-latest-win64-gpl-shared.zip" } else { "ffmpeg-master-latest-linux64-gpl.tar.xz" },
+    if cfg!(windows) {
+        "ffmpeg-master-latest-win64-gpl-shared.zip"
+    } else {
+        "ffmpeg-master-latest-linux64-gpl.tar.xz"
+    },
 );
 
 /// Download sizes shown on the buttons that fetch the tools.
@@ -789,14 +1069,19 @@ pub fn tools_generation() -> u64 {
 fn repaint_while(flag: &'static AtomicBool, cx: &mut App) {
     cx.spawn(async move |cx| {
         while flag.load(Ordering::SeqCst) {
-            cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
             let _ = cx.update(|cx| cx.refresh_windows());
         }
     })
     .detach();
 }
 
-fn download_github_asset((repo, release, name): (&str, &str, &str), dest: &std::path::Path) -> anyhow::Result<()> {
+fn download_github_asset(
+    (repo, release, name): (&str, &str, &str),
+    dest: &std::path::Path,
+) -> anyhow::Result<()> {
     download_github_asset_progress((repo, release, name), dest, None)
 }
 
@@ -805,15 +1090,29 @@ fn download_github_asset_progress(
     dest: &std::path::Path,
     pct: Option<&AtomicU32>,
 ) -> anyhow::Result<()> {
-    let rel = crate::api::http::get_json(&format!("https://api.github.com/repos/{repo}/releases/{release}"))?;
+    let rel = crate::api::http::get_json(&format!(
+        "https://api.github.com/repos/{repo}/releases/{release}"
+    ))?;
     let asset = rel
         .get("assets")
         .and_then(|a| a.as_array())
-        .and_then(|a| a.iter().find(|x| x.get("name").and_then(|n| n.as_str()) == Some(name)))
+        .and_then(|a| {
+            a.iter()
+                .find(|x| x.get("name").and_then(|n| n.as_str()) == Some(name))
+        })
         .ok_or_else(|| anyhow::anyhow!("{name} is not in the latest release"))?;
-    let url = asset.get("browser_download_url").and_then(|u| u.as_str()).filter(|u| u.starts_with(&format!("https://github.com/{repo}/releases/download/")));
-    let sha = asset.get("digest").and_then(|d| d.as_str()).and_then(|d| d.strip_prefix("sha256:")).map(str::to_ascii_lowercase);
-    let (Some(url), Some(sha)) = (url, sha) else { anyhow::bail!("GitHub gave no checksum for {name}") };
+    let url = asset
+        .get("browser_download_url")
+        .and_then(|u| u.as_str())
+        .filter(|u| u.starts_with(&format!("https://github.com/{repo}/releases/download/")));
+    let sha = asset
+        .get("digest")
+        .and_then(|d| d.as_str())
+        .and_then(|d| d.strip_prefix("sha256:"))
+        .map(str::to_ascii_lowercase);
+    let (Some(url), Some(sha)) = (url, sha) else {
+        anyhow::bail!("GitHub gave no checksum for {name}")
+    };
     {
         let mut f = std::fs::File::create(dest)?;
         let size = asset.get("size").and_then(|s| s.as_u64());
@@ -837,9 +1136,16 @@ fn ffmpeg_dir() -> std::path::PathBuf {
 
 /// FFmpeg next to the app, in the app's data folder, or on PATH.
 pub fn ffmpeg_path() -> Option<String> {
-    let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let exe = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
     let mut cands = vec![ffmpeg_dir().join(exe)];
-    if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+    if let Some(d) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+    {
         cands.push(d.join(exe));
         cands.push(d.join("ffmpeg").join(exe));
     }
@@ -849,7 +1155,9 @@ pub fn ffmpeg_path() -> Option<String> {
     static ON_PATH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let on_path = *ON_PATH.get_or_init(|| {
         let mut c = Command::new("ffmpeg");
-        c.arg("-version").stdout(Stdio::null()).stderr(Stdio::null());
+        c.arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         hide_window(&mut c);
         c.status().map(|s| s.success()).unwrap_or(false)
     });
@@ -875,12 +1183,19 @@ pub fn fetch_ffmpeg(cx: &mut App) {
             FFMPEG_PCT.store(UNPACKING, Ordering::SeqCst);
             // Windows 10+ ships bsdtar, which reads zip files; GNU tar unpacks .tar.xz
             let mut c = Command::new("tar");
-            c.arg(if cfg!(windows) { "-xf" } else { "-xJf" }).arg(&archive).arg("-C").arg(&tmp);
+            c.arg(if cfg!(windows) { "-xf" } else { "-xJf" })
+                .arg(&archive)
+                .arg("-C")
+                .arg(&tmp);
             hide_window(&mut c);
             if !c.status()?.success() {
                 anyhow::bail!("could not unpack FFmpeg");
             }
-            let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+            let exe = if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            };
             let bin = std::fs::read_dir(&tmp)?
                 .filter_map(Result::ok)
                 .map(|e| e.path().join("bin"))
@@ -929,7 +1244,15 @@ pub fn fetch_ffmpeg(cx: &mut App) {
 
 static YTDLP_FETCHING: AtomicBool = AtomicBool::new(false);
 
-const YTDLP_ASSET: (&str, &str, &str) = ("yt-dlp/yt-dlp", "latest", if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp_linux" });
+const YTDLP_ASSET: (&str, &str, &str) = (
+    "yt-dlp/yt-dlp",
+    "latest",
+    if cfg!(windows) {
+        "yt-dlp.exe"
+    } else {
+        "yt-dlp_linux"
+    },
+);
 
 /// Downloads yt-dlp into the data folder, then starts the downloads waiting for it.
 pub fn fetch_ytdlp(cx: &mut App) {
@@ -941,7 +1264,11 @@ pub fn fetch_ytdlp(cx: &mut App) {
     repaint_while(&YTDLP_FETCHING, cx);
     cx.spawn(async move |cx| {
         let res = crate::ui::blocking(|| -> anyhow::Result<()> {
-            let name = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
+            let name = if cfg!(windows) {
+                "yt-dlp.exe"
+            } else {
+                "yt-dlp"
+            };
             let dest = store::data_dir().join(name);
             let tmp = store::data_dir().join(format!("{name}.part"));
             download_github_asset_progress(YTDLP_ASSET, &tmp, Some(&YTDLP_PCT))?;
@@ -1009,12 +1336,36 @@ mod kids_download_tests {
         let url = "https://www.youtube.com/watch?v=e_04ZrNroTo";
         let fmt = "bv*[height<=360]+ba/b[height<=360]/b";
         // yt-dlp alone fails, with an error that leads to the retries
-        if let Err(e) = super::ytdlp_run(&bin, &dir, url, fmt, &s, &["--extractor-args", super::YTDLP_IOS], None, &cancel, &|_, _| {}) {
+        if let Err(e) = super::ytdlp_run(
+            &bin,
+            &dir,
+            url,
+            fmt,
+            &s,
+            &["--extractor-args", super::YTDLP_IOS],
+            None,
+            &cancel,
+            &|_, _| {},
+        ) {
             println!("yt-dlp iOS: {e}");
         }
         let manifest = crate::api::streams::ios_hls_manifest("e_04ZrNroTo").unwrap();
-        let name = format!("{} [e_04ZrNroTo]", super::sanitize("Kids: test / video?").replace('%', "%%"));
-        let path = super::ytdlp_run(&bin, &dir, &manifest, fmt, &s, &[], Some(&name), &cancel, &|p, d| println!("{p:.2} {d}")).unwrap();
+        let name = format!(
+            "{} [e_04ZrNroTo]",
+            super::sanitize("Kids: test / video?").replace('%', "%%")
+        );
+        let path = super::ytdlp_run(
+            &bin,
+            &dir,
+            &manifest,
+            fmt,
+            &s,
+            &[],
+            Some(&name),
+            &cancel,
+            &|p, d| println!("{p:.2} {d}"),
+        )
+        .unwrap();
         println!("{path}");
         assert!(path.contains("e_04ZrNroTo"));
         assert!(std::fs::metadata(&path).unwrap().len() > 1_000_000);

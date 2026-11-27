@@ -9,11 +9,17 @@ use std::time::Duration;
 /// `streamtube://www.youtube.com/watch?v=…`; anything else is returned unchanged.
 pub fn normalize(arg: &str) -> String {
     let a = arg.trim().trim_matches('"');
-    let Some(rest) = a.strip_prefix("streamtube:").or_else(|| a.strip_prefix("STREAMTUBE:")) else {
+    let Some(rest) = a
+        .strip_prefix("streamtube:")
+        .or_else(|| a.strip_prefix("STREAMTUBE:"))
+    else {
         return a.to_string();
     };
     let rest = rest.trim_start_matches('/');
-    if let Some(q) = rest.strip_prefix("open?").or_else(|| rest.strip_prefix("open/?")) {
+    if let Some(q) = rest
+        .strip_prefix("open?")
+        .or_else(|| rest.strip_prefix("open/?"))
+    {
         if let Some(u) = q.split('&').find_map(|kv| kv.strip_prefix("url=")) {
             return crate::api::http::urldecode(u);
         }
@@ -35,9 +41,14 @@ fn port_file() -> std::path::PathBuf {
 
 /// Hands `arg` to an already running instance. True when one took it (this process should exit).
 pub fn forward_to_running(arg: &str) -> bool {
-    let Ok(s) = std::fs::read_to_string(port_file()) else { return false };
+    let Ok(s) = std::fs::read_to_string(port_file()) else {
+        return false;
+    };
     let mut parts = s.split_whitespace();
-    let (Some(port), pid) = (parts.next().and_then(|p| p.parse::<u16>().ok()), parts.next().and_then(|p| p.parse::<u32>().ok())) else {
+    let (Some(port), pid) = (
+        parts.next().and_then(|p| p.parse::<u16>().ok()),
+        parts.next().and_then(|p| p.parse::<u32>().ok()),
+    ) else {
         return false;
     };
     // the running instance only takes links that carry the secret from this file
@@ -48,7 +59,9 @@ pub fn forward_to_running(arg: &str) -> bool {
         return false;
     }
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(400)) else { return false };
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(400)) else {
+        return false;
+    };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
     #[cfg(windows)]
     if let Some(pid) = pid {
@@ -61,7 +74,10 @@ pub fn forward_to_running(arg: &str) -> bool {
     }
     #[cfg(not(windows))]
     let _ = pid;
-    if stream.write_all(format!("STREAMTUBE {token} {}\n", arg.replace('\n', " ")).as_bytes()).is_err() {
+    if stream
+        .write_all(format!("STREAMTUBE {token} {}\n", arg.replace('\n', " ")).as_bytes())
+        .is_err()
+    {
         return false;
     }
     let mut reply = String::new();
@@ -74,7 +90,9 @@ pub fn register_scheme() {
     #[cfg(windows)]
     std::thread::spawn(|| {
         use std::process::Command;
-        let Ok(exe) = std::env::current_exe() else { return };
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
         let key = r"HKCU\Software\Classes\streamtube";
         let reg = |args: &[&str]| {
             let mut c = Command::new("reg");
@@ -89,8 +107,22 @@ pub fn register_scheme() {
         let cmd = format!("\"{exe}\" \"%1\"");
         let _ = reg(&["add", key, "/ve", "/d", "URL:Stream Tube", "/f"])
             && reg(&["add", key, "/v", "URL Protocol", "/d", "", "/f"])
-            && reg(&["add", &format!(r"{key}\DefaultIcon"), "/ve", "/d", &format!("{exe},0"), "/f"])
-            && reg(&["add", &format!(r"{key}\shell\open\command"), "/ve", "/d", &cmd, "/f"]);
+            && reg(&[
+                "add",
+                &format!(r"{key}\DefaultIcon"),
+                "/ve",
+                "/d",
+                &format!("{exe},0"),
+                "/f",
+            ])
+            && reg(&[
+                "add",
+                &format!(r"{key}\shell\open\command"),
+                "/ve",
+                "/d",
+                &cmd,
+                "/f",
+            ]);
     });
 }
 
@@ -120,7 +152,8 @@ fn process_alive(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        std::path::Path::new(&format!("/proc/{pid}")).exists() || !std::path::Path::new("/proc/self").exists()
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+            || !std::path::Path::new("/proc/self").exists()
     }
 }
 
@@ -131,7 +164,11 @@ pub fn listen() -> Option<futures::channel::mpsc::UnboundedReceiver<String>> {
     // Any local process can reach a loopback port, so a link is only taken with this
     // secret. It lives in the profile folder, which only this user can read.
     let token = new_token();
-    std::fs::write(port_file(), format!("{port} {} {token}", std::process::id())).ok()?;
+    std::fs::write(
+        port_file(),
+        format!("{port} {} {token}", std::process::id()),
+    )
+    .ok()?;
     let (tx, rx) = futures::channel::mpsc::unbounded();
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -143,7 +180,9 @@ pub fn listen() -> Option<futures::channel::mpsc::UnboundedReceiver<String>> {
                 continue;
             }
             // only our own launches speak this, and know the secret
-            let Some(arg) = parse_request(&line, &token) else { continue };
+            let Some(arg) = parse_request(&line, &token) else {
+                continue;
+            };
             let _ = (&stream).write_all(b"ok\n");
             if tx.unbounded_send(arg.to_string()).is_err() {
                 break;
@@ -154,7 +193,9 @@ pub fn listen() -> Option<futures::channel::mpsc::UnboundedReceiver<String>> {
 }
 
 fn parse_request<'a>(line: &'a str, token: &str) -> Option<&'a str> {
-    let payload = line.trim_end_matches(['\r', '\n']).strip_prefix("STREAMTUBE ")?;
+    let payload = line
+        .trim_end_matches(['\r', '\n'])
+        .strip_prefix("STREAMTUBE ")?;
     check_token(payload, token)
 }
 
@@ -162,13 +203,20 @@ fn parse_request<'a>(line: &'a str, token: &str) -> Option<&'a str> {
 fn new_token() -> String {
     use rand::Rng;
     let mut rng = rand::rng();
-    (0..32).map(|_| format!("{:02x}", rng.random::<u8>())).collect()
+    (0..32)
+        .map(|_| format!("{:02x}", rng.random::<u8>()))
+        .collect()
 }
 
 /// The link after "<token> " when the token matches (compared in constant time).
 fn check_token<'a>(rest: &'a str, token: &str) -> Option<&'a str> {
     let (given, arg) = rest.split_once(' ')?;
-    let same = given.len() == token.len() && given.bytes().zip(token.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
+    let same = given.len() == token.len()
+        && given
+            .bytes()
+            .zip(token.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0;
     same.then_some(arg)
 }
 
@@ -180,17 +228,29 @@ mod tests {
     fn links_need_the_token() {
         let token = super::new_token();
         assert_eq!(token.len(), 64);
-        assert_eq!(super::check_token(&format!("{token} https://youtu.be/abc"), &token), Some("https://youtu.be/abc"));
+        assert_eq!(
+            super::check_token(&format!("{token} https://youtu.be/abc"), &token),
+            Some("https://youtu.be/abc")
+        );
         assert_eq!(super::check_token("https://youtu.be/abc", &token), None);
-        assert_eq!(super::check_token(&format!("{} https://youtu.be/abc", "0".repeat(64)), &token), None);
+        assert_eq!(
+            super::check_token(&format!("{} https://youtu.be/abc", "0".repeat(64)), &token),
+            None
+        );
         assert_ne!(super::new_token(), token);
     }
 
     #[test]
     fn launch_without_a_url_is_forwarded_to_the_running_instance() {
         let token = super::new_token();
-        assert_eq!(super::parse_request(&format!("STREAMTUBE {token} \n"), &token), Some(""));
-        assert_eq!(super::parse_request(&format!("STREAMTUBE {token}\n"), &token), None);
+        assert_eq!(
+            super::parse_request(&format!("STREAMTUBE {token} \n"), &token),
+            Some("")
+        );
+        assert_eq!(
+            super::parse_request(&format!("STREAMTUBE {token}\n"), &token),
+            None
+        );
     }
 
     #[test]
@@ -201,10 +261,22 @@ mod tests {
 
     #[test]
     fn scheme_links() {
-        assert_eq!(normalize("streamtube://open?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc"), "https://www.youtube.com/watch?v=abc");
-        assert_eq!(normalize("streamtube:https://youtu.be/abc"), "https://youtu.be/abc");
-        assert_eq!(normalize("streamtube://https:/youtu.be/abc"), "https://youtu.be/abc");
-        assert_eq!(normalize("streamtube://www.youtube.com/watch?v=abc"), "https://www.youtube.com/watch?v=abc");
+        assert_eq!(
+            normalize("streamtube://open?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc"),
+            "https://www.youtube.com/watch?v=abc"
+        );
+        assert_eq!(
+            normalize("streamtube:https://youtu.be/abc"),
+            "https://youtu.be/abc"
+        );
+        assert_eq!(
+            normalize("streamtube://https:/youtu.be/abc"),
+            "https://youtu.be/abc"
+        );
+        assert_eq!(
+            normalize("streamtube://www.youtube.com/watch?v=abc"),
+            "https://www.youtube.com/watch?v=abc"
+        );
         assert_eq!(normalize("https://youtu.be/abc"), "https://youtu.be/abc");
     }
 }

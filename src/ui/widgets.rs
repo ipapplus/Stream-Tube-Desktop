@@ -31,7 +31,12 @@ impl<T> Load<T> {
 pub fn page_scroll(id: &'static str, handle: &ScrollHandle) -> PageScroll {
     PageScroll {
         id,
-        inner: div().id("page-scroll-content").absolute().inset_0().overflow_y_scroll().track_scroll(handle),
+        inner: div()
+            .id("page-scroll-content")
+            .absolute()
+            .inset_0()
+            .overflow_y_scroll()
+            .track_scroll(handle),
         handle: handle.clone(),
     }
 }
@@ -67,7 +72,11 @@ pub fn scroll_viewport<H: PageScrollHandle + Clone + 'static, E: IntoElement>(
 ) -> impl IntoElement + use<H, E> {
     let shared: Rc<dyn PageScrollHandle> = Rc::new(handle.clone());
     ACTIVE_PAGE.with(|a| *a.borrow_mut() = Some((id, shared.clone())));
-    let mode = if crate::store::settings_snapshot().always_scrollbars { ScrollbarMode::Always } else { ScrollbarMode::Hover };
+    let mode = if crate::store::settings_snapshot().always_scrollbars {
+        ScrollbarMode::Always
+    } else {
+        ScrollbarMode::Hover
+    };
     div()
         .id(id)
         .relative()
@@ -78,9 +87,14 @@ pub fn scroll_viewport<H: PageScrollHandle + Clone + 'static, E: IntoElement>(
         .child(content)
         // Keep the scrollbar overlay in viewport coordinates as the content moves underneath it.
         .when(!window.is_inspector_picking(cx), |page| {
-            page.child(div().absolute().inset_0().child(
-                Scrollbar::vertical(handle).id("page-scrollbar").mode(mode).viewport_from_layout(),
-            ))
+            page.child(
+                div().absolute().inset_0().child(
+                    Scrollbar::vertical(handle)
+                        .id("page-scrollbar")
+                        .mode(mode)
+                        .viewport_from_layout(),
+                ),
+            )
         })
 }
 
@@ -122,7 +136,9 @@ struct Glide {
 /// Scrolls the page on screen for PageUp/PageDown, Home/End, the arrow keys and
 /// Space / Shift+Space. Returns false when the key isn't a scrolling key.
 pub fn scroll_page_key(key: &str, shift: bool, window: &mut Window) -> bool {
-    let Some((id, handle)) = ACTIVE_PAGE.with(|a| a.borrow().clone()) else { return false };
+    let Some((id, handle)) = ACTIVE_PAGE.with(|a| a.borrow().clone()) else {
+        return false;
+    };
     if key == "end" && handle.jump_to_end() {
         GLIDES.with(|g| g.borrow_mut().remove(id));
         window.refresh();
@@ -143,7 +159,13 @@ pub fn scroll_page_key(key: &str, shift: bool, window: &mut Window) -> bool {
     let now: f32 = handle.offset().y.into();
     GLIDES.with(|g| {
         let mut g = g.borrow_mut();
-        let st = g.entry(id).or_insert(Glide { shown: now, target: now, last: std::time::Instant::now(), precise: false, wheel: None });
+        let st = g.entry(id).or_insert(Glide {
+            shown: now,
+            target: now,
+            last: std::time::Instant::now(),
+            precise: false,
+            wheel: None,
+        });
         // from where it's already heading, so repeated presses add up
         let in_flight = (st.target - now).abs() > 0.5 && !st.precise;
         let from = if in_flight { st.target } else { now };
@@ -175,14 +197,27 @@ fn smooth_scroll(id: &'static str, handle: Rc<dyn PageScrollHandle>) -> impl Int
             let max: f32 = scroll_limit(handle.as_ref()).into();
             GLIDES.with(|g| {
                 let mut g = g.borrow_mut();
-                let st = g.entry(id).or_insert(Glide { shown: actual, target: actual, last: now, precise: false, wheel: None });
+                let st = g.entry(id).or_insert(Glide {
+                    shown: actual,
+                    target: actual,
+                    last: now,
+                    precise: false,
+                    wheel: None,
+                });
                 let wheel = st.wheel.take();
                 let moved = actual - st.shown;
                 if moved.abs() > 0.01 {
                     // something moved the page since the last frame
-                    let Some(wheel_at) = wheel.filter(|_| !st.precise && moved.abs() <= 3000.0) else {
+                    let Some(wheel_at) = wheel.filter(|_| !st.precise && moved.abs() <= 3000.0)
+                    else {
                         // touchpad, the scrollbar, or a jump (new page, scroll to top): follow it exactly
-                        *st = Glide { shown: actual, target: actual, last: now, precise: st.precise, wheel: None };
+                        *st = Glide {
+                            shown: actual,
+                            target: actual,
+                            last: now,
+                            precise: st.precise,
+                            wheel: None,
+                        };
                         return;
                     };
                     if (st.target - st.shown).abs() < 0.5 {
@@ -208,7 +243,9 @@ fn smooth_scroll(id: &'static str, handle: Rc<dyn PageScrollHandle>) -> impl Int
         move |_, _, window, _| {
             let wheel_handle = wheel_handle.clone();
             window.on_mouse_event(move |ev: &ScrollEvent, phase, _, _| {
-                if phase == DispatchPhase::Capture && wheel_handle.viewport_bounds().contains(&ev.position) {
+                if phase == DispatchPhase::Capture
+                    && wheel_handle.viewport_bounds().contains(&ev.position)
+                {
                     GLIDES.with(|g| {
                         if let Some(st) = g.borrow_mut().get_mut(id) {
                             st.precise = ev.delta.precise();
@@ -227,7 +264,10 @@ fn smooth_scroll(id: &'static str, handle: Rc<dyn PageScrollHandle>) -> impl Int
 /// to every scroll area under the pointer, so without this the page scrolls
 /// along with (or instead of) the list the pointer is over.
 pub fn nested_scroll(id: impl Into<ElementId>, list: impl IntoElement) -> Stateful<Div> {
-    div().id(id).on_scroll(|_, _, cx| cx.stop_propagation()).child(list)
+    div()
+        .id(id)
+        .on_scroll(|_, _, cx| cx.stop_propagation())
+        .child(list)
 }
 
 /// True when the scroll position is within `margin` of the bottom, or when the
@@ -250,7 +290,167 @@ pub fn content_width(cx: &App) -> Pixels {
 
 pub fn section_title(text: impl Into<SharedString>, cx: &App) -> Div {
     let p = pal(cx);
-    div().text_xl().font_weight(FontWeight::BOLD).text_color(p.text).child(text.into())
+    div()
+        .text_xl()
+        .font_weight(FontWeight::BOLD)
+        .text_color(p.text)
+        .child(text.into())
+}
+
+/// Plain interface prose: wrap in logical order, then shape each line using the
+/// same text backend as ordinary labels. Selectable user content keeps its
+/// existing document and selection handlers.
+pub fn rtl_prose(text: impl Into<SharedString>, cx: &App) -> AnyElement {
+    let text = text.into();
+    if LayoutDirection::global(cx).is_rtl()
+        && text
+            .chars()
+            .any(|ch| unicode_bidi::bidi_class(ch) == unicode_bidi::BidiClass::AL)
+    {
+        RtlProse(text).into_any_element()
+    } else {
+        text.into_any_element()
+    }
+}
+
+struct RtlProse(SharedString);
+
+impl IntoElement for RtlProse {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+fn logical_breaks(text: &str) -> impl Iterator<Item = usize> + '_ {
+    let mut isolates: usize = 0;
+    text.char_indices()
+        .filter_map(move |(index, ch)| {
+            match ch {
+                '\u{2066}'..='\u{2068}' => isolates += 1,
+                '\u{2069}' => isolates = isolates.saturating_sub(1),
+                ' ' if index > 0 && isolates == 0 => return Some(index),
+                _ => {}
+            }
+            None
+        })
+        .chain([text.len()])
+}
+
+impl RtlProse {
+    fn lines(&self, width: Pixels, style: &TextStyle, window: &Window) -> Vec<ShapedLine> {
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let shape = |text: &str| {
+            // Continuation lines can start with a neutral or Latin value.
+            // Keep the paragraph's direction in the shaping input, not in data.
+            let text = SharedString::from(format!("\u{200F}{}", text.trim()));
+            let run = style.to_run(text.len());
+            window
+                .text_system()
+                .shape_line(text, font_size, &[run], None)
+        };
+        let mut lines = Vec::new();
+        for paragraph in self.0.split('\n') {
+            let full = shape(paragraph);
+            if full.width <= width {
+                lines.push(full);
+                continue;
+            }
+            let mut start = 0;
+            let mut previous = None;
+            for end in logical_breaks(paragraph) {
+                let mut line = shape(&paragraph[start..end]);
+                if line.width > width
+                    && let Some((previous_end, previous_line)) = previous.take()
+                {
+                    lines.push(previous_line);
+                    start = previous_end;
+                    line = shape(&paragraph[start..end]);
+                }
+                previous = Some((end, line));
+            }
+            lines.extend(previous.map(|(_, line)| line));
+        }
+        lines
+    }
+}
+
+impl Element for RtlProse {
+    type RequestLayoutState = TextStyle;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        _: &mut App,
+    ) -> (LayoutId, TextStyle) {
+        let text = Self(self.0.clone());
+        let style = window.text_style();
+        let measured_style = style.clone();
+        let id =
+            window.request_measured_layout(Style::default(), move |known, available, window, _| {
+                let width = known.width.unwrap_or(match available.width {
+                    AvailableSpace::Definite(width) => width,
+                    _ => px(f32::MAX),
+                });
+                let lines = text.lines(width, &measured_style, window);
+                let text_width = lines
+                    .iter()
+                    .map(|line| line.width)
+                    .max()
+                    .unwrap_or_default();
+                let height = measured_style.line_height_in_pixels(window.rem_size());
+                size(text_width.ceil().min(width), height * lines.len())
+            });
+        (id, style)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut TextStyle,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        style: &mut TextStyle,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let height = style.line_height_in_pixels(window.rem_size());
+        let mut origin = bounds.origin;
+        for line in self.lines(bounds.size.width, style, window) {
+            let _ = line.paint(
+                origin,
+                height,
+                TextAlign::Right,
+                Some(bounds.size.width),
+                window,
+                cx,
+            );
+            origin.y += height;
+        }
+    }
 }
 
 /// Sets up a "load more" trigger: call from render; spawns `f` when near the bottom.
@@ -298,18 +498,33 @@ pub(crate) fn tokenize(text: &str) -> Vec<(std::ops::Range<usize>, Token)> {
     let mut i = 0;
     while i < text.len() {
         let rest = &text[i..];
-        let at_word_start = i == 0 || !text[..i].chars().last().map(|c| c.is_alphanumeric()).unwrap_or(false);
+        let at_word_start = i == 0
+            || !text[..i]
+                .chars()
+                .last()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
         if rest.starts_with("http://") || rest.starts_with("https://") {
-            let end = rest.find(|c: char| c.is_whitespace() || c == ')' || c == '"').unwrap_or(rest.len());
-            let url = rest[..end].trim_end_matches(['.', ',', '!', '?']).to_string();
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == ')' || c == '"')
+                .unwrap_or(rest.len());
+            let url = rest[..end]
+                .trim_end_matches(['.', ',', '!', '?'])
+                .to_string();
             out.push((i..i + url.len(), Token::Url(url.clone())));
             i += url.len().max(1);
             continue;
         }
         if at_word_start && bytes[i].is_ascii_digit() {
-            let end = rest.find(|c: char| !(c.is_ascii_digit() || c == ':')).unwrap_or(rest.len());
+            let end = rest
+                .find(|c: char| !(c.is_ascii_digit() || c == ':'))
+                .unwrap_or(rest.len());
             let cand = &rest[..end];
-            if cand.contains(':') && !cand.ends_with(':') && cand.split(':').count() <= 3 && cand.split(':').skip(1).all(|p| p.len() == 2) {
+            if cand.contains(':')
+                && !cand.ends_with(':')
+                && cand.split(':').count() <= 3
+                && cand.split(':').skip(1).all(|p| p.len() == 2)
+            {
                 if let Some(secs) = crate::api::json::parse_duration(cand) {
                     out.push((i..i + end, Token::Time(secs as f64)));
                     i += end;
@@ -324,7 +539,11 @@ pub(crate) fn tokenize(text: &str) -> Vec<(std::ops::Range<usize>, Token)> {
                 .unwrap_or(rest.len());
             let word = rest[..end].trim_end_matches('.');
             if word.len() > 1 {
-                let tok = if bytes[i] == b'#' { Token::Hashtag(word.to_string()) } else { Token::Handle(word.to_string()) };
+                let tok = if bytes[i] == b'#' {
+                    Token::Hashtag(word.to_string())
+                } else {
+                    Token::Handle(word.to_string())
+                };
                 out.push((i..i + word.len(), tok));
                 i += word.len();
                 continue;
@@ -340,7 +559,10 @@ fn rich_text_tokens(text: &str, links: &[DescriptionLink]) -> Vec<(std::ops::Ran
     if !links.is_empty() {
         for link in links {
             let range = link.range.start..link.range.end.min(text.len());
-            if text.get(range.clone()).is_some_and(|label| !label.is_empty()) {
+            if text
+                .get(range.clone())
+                .is_some_and(|label| !label.is_empty())
+            {
                 tokens.retain(|(r, _)| r.end <= range.start || range.end <= r.start);
                 tokens.push((range, Token::Url(link.url.clone())));
             }
@@ -379,7 +601,9 @@ fn to_markdown(text: &str, tokens: &[(std::ops::Range<usize>, Token)]) -> String
             }
             Token::Time(t) => md.push_str(&format!("st-time:{}", *t as u64)),
             Token::Hashtag(h) => md.push_str(&format!("st-tag:{}", crate::api::http::urlencode(h))),
-            Token::Handle(h) => md.push_str(&format!("st-handle:{}", crate::api::http::urlencode(h))),
+            Token::Handle(h) => {
+                md.push_str(&format!("st-handle:{}", crate::api::http::urlencode(h)))
+            }
         }
         md.push(')');
         last = r.end;
@@ -400,20 +624,30 @@ fn open_link(url: &str, window: &mut Window, cx: &mut App) {
         // back up to the player, like YouTube does
         scroll_page_key("home", false, window);
     } else if let Some(h) = url.strip_prefix("st-tag:") {
-        crate::ui::app::navigate(crate::ui::app::Route::Search(crate::api::http::urldecode(h)), window, cx);
+        crate::ui::app::navigate(
+            crate::ui::app::Route::Search(crate::api::http::urldecode(h)),
+            window,
+            cx,
+        );
     } else if let Some(h) = url.strip_prefix("st-handle:") {
         let url = format!("https://www.youtube.com/{}", crate::api::http::urldecode(h));
         cx.spawn(async move |cx| {
-            if let Ok(crate::api::innertube::ResolvedUrl::Channel(id)) = blocking(move || crate::api::innertube::resolve_url(&url)).await {
+            if let Ok(crate::api::innertube::ResolvedUrl::Channel(id)) =
+                blocking(move || crate::api::innertube::resolve_url(&url)).await
+            {
                 let _ = cx.update(|cx| {
                     if let Some(w) = cx.active_window() {
-                        let _ = w.update(cx, |_, window, cx| crate::ui::app::navigate(crate::ui::app::Route::Channel(id), window, cx));
+                        let _ = w.update(cx, |_, window, cx| {
+                            crate::ui::app::navigate(crate::ui::app::Route::Channel(id), window, cx)
+                        });
                     }
                 });
             }
         })
         .detach();
-    } else if let Some(route) = crate::ui::app::route_from_link(url).filter(|r| !matches!(r, crate::ui::app::Route::Search(_))) {
+    } else if let Some(route) = crate::ui::app::route_from_link(url)
+        .filter(|r| !matches!(r, crate::ui::app::Route::Search(_)))
+    {
         crate::ui::app::navigate(route, window, cx);
     } else {
         crate::ui::open_web(url);
@@ -434,22 +668,39 @@ pub fn selectable_text(id: impl Into<ElementId>, text: impl Into<SharedString>) 
     div()
         .cursor_text()
         .child(gpui_kit::base::SelectableText::new(id, text))
-        .on_mouse_down(MouseButton::Right, move |ev: &MouseDownEvent, window, cx| {
-            cx.stop_propagation();
-            let selected = gpui_kit::base::TextSelection::selected_text(window, cx).trim().to_string();
-            let all = copy_all.to_string();
-            let mut items = Vec::new();
-            if !selected.is_empty() && selected != all {
-                items.push(crate::ui::app::MenuItem::new("copy", t("Copy"), move |_, cx| {
-                    crate::ui::copy_text_to_clipboard(selected.clone(), cx);
-                }));
-            }
-            let label = if items.is_empty() { t("Copy") } else { t("Copy all text") };
-            items.push(crate::ui::app::MenuItem::new("copy", label, move |_, cx| {
-                crate::ui::copy_text_to_clipboard(all.clone(), cx);
-            }));
-            crate::ui::app::open_menu(ev.position, items, window, cx);
-        })
+        .on_mouse_down(
+            MouseButton::Right,
+            move |ev: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                let selected = gpui_kit::base::TextSelection::selected_text(window, cx)
+                    .trim()
+                    .to_string();
+                let all = copy_all.to_string();
+                let mut items = Vec::new();
+                if !selected.is_empty() && selected != all {
+                    items.push(crate::ui::app::MenuItem::new(
+                        "copy",
+                        t("Copy"),
+                        move |_, cx| {
+                            crate::ui::copy_text_to_clipboard(selected.clone(), cx);
+                        },
+                    ));
+                }
+                let label = if items.is_empty() {
+                    t("Copy")
+                } else {
+                    t("Copy all text")
+                };
+                items.push(crate::ui::app::MenuItem::new(
+                    "copy",
+                    label,
+                    move |_, cx| {
+                        crate::ui::copy_text_to_clipboard(all.clone(), cx);
+                    },
+                ));
+                crate::ui::app::open_menu(ev.position, items, window, cx);
+            },
+        )
 }
 
 /// Selectable text (drag to select, Ctrl+C) with clickable links, timestamps,
@@ -458,12 +709,21 @@ pub fn rich_text(id: impl Into<ElementId>, text: String, cx: &App) -> AnyElement
     rich_text_with(id, text, &[], cx)
 }
 
-pub fn rich_text_with_links(id: impl Into<ElementId>, text: String, links: &[DescriptionLink]) -> AnyElement {
+pub fn rich_text_with_links(
+    id: impl Into<ElementId>,
+    text: String,
+    links: &[DescriptionLink],
+) -> AnyElement {
     render_rich_text(id, text, &[], links)
 }
 
 /// [`rich_text`] with channel emojis (shortcut, image URL) drawn inline as images.
-pub fn rich_text_with(id: impl Into<ElementId>, text: String, emojis: &[(String, String)], _cx: &App) -> AnyElement {
+pub fn rich_text_with(
+    id: impl Into<ElementId>,
+    text: String,
+    emojis: &[(String, String)],
+    _cx: &App,
+) -> AnyElement {
     render_rich_text(id, text, emojis, &[])
 }
 
@@ -474,7 +734,16 @@ fn render_rich_text(
     links: &[DescriptionLink],
 ) -> AnyElement {
     let tokens = rich_text_tokens(&text, links);
-    let urls: Vec<String> = tokens.iter().filter_map(|(_, t)| if let Token::Url(u) = t { Some(u.clone()) } else { None }).collect();
+    let urls: Vec<String> = tokens
+        .iter()
+        .filter_map(|(_, t)| {
+            if let Token::Url(u) = t {
+                Some(u.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
     let md = if emojis.is_empty() {
         to_markdown(&text, &tokens)
     } else {
@@ -486,9 +755,18 @@ fn render_rich_text(
         }
         let mut md = to_markdown(&marked, &tokenize(&marked));
         for (i, (code, url)) in emojis.iter().enumerate() {
-            let alt: String = code.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect();
-            let src: String = url.chars().filter(|c| !matches!(c, '<' | '>' | '"' | ' ')).collect();
-            md = md.replace(&format!("\u{E000}{i}\u{E001}"), &format!(r#"<img src="{src}" alt="{alt}" width="18" height="18" />"#));
+            let alt: String = code
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            let src: String = url
+                .chars()
+                .filter(|c| !matches!(c, '<' | '>' | '"' | ' '))
+                .collect();
+            md = md.replace(
+                &format!("\u{E000}{i}\u{E001}"),
+                &format!(r#"<img src="{src}" alt="{alt}" width="18" height="18" />"#),
+            );
         }
         md
     };
@@ -499,26 +777,47 @@ fn render_rich_text(
     div()
         .w_full()
         .child(view)
-        .on_mouse_down(MouseButton::Right, move |ev: &MouseDownEvent, window, cx| {
-            cx.stop_propagation();
-            let selected = gpui_kit::base::TextSelection::selected_text(window, cx).trim().to_string();
-            let text = copy_text.clone();
-            let mut items = Vec::new();
-            if !selected.is_empty() && selected != text {
-                items.push(crate::ui::app::MenuItem::new("copy", t("Copy"), move |_, cx| {
-                    crate::ui::copy_text_to_clipboard(selected.clone(), cx);
-                }));
-            }
-            items.push(crate::ui::app::MenuItem::new("copy", t("Copy all text"), move |_, cx| {
-                crate::ui::copy_text_to_clipboard(text.clone(), cx);
-            }));
-            for u in urls.iter().take(3) {
-                let u2 = u.clone();
-                let label = if u.chars().count() > 40 { tf!("Copy link {0}…", u.chars().take(40).collect::<String>()) } else { tf!("Copy link {0}", u) };
-                items.push(crate::ui::app::MenuItem::new("link", label, move |_, cx| crate::ui::copy_to_clipboard(u2.clone(), cx)));
-            }
-            crate::ui::app::open_menu(ev.position, items, window, cx);
-        })
+        .on_mouse_down(
+            MouseButton::Right,
+            move |ev: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                let selected = gpui_kit::base::TextSelection::selected_text(window, cx)
+                    .trim()
+                    .to_string();
+                let text = copy_text.clone();
+                let mut items = Vec::new();
+                if !selected.is_empty() && selected != text {
+                    items.push(crate::ui::app::MenuItem::new(
+                        "copy",
+                        t("Copy"),
+                        move |_, cx| {
+                            crate::ui::copy_text_to_clipboard(selected.clone(), cx);
+                        },
+                    ));
+                }
+                items.push(crate::ui::app::MenuItem::new(
+                    "copy",
+                    t("Copy all text"),
+                    move |_, cx| {
+                        crate::ui::copy_text_to_clipboard(text.clone(), cx);
+                    },
+                ));
+                for u in urls.iter().take(3) {
+                    let u2 = u.clone();
+                    let label = if u.chars().count() > 40 {
+                        tf!("Copy link {0}…", u.chars().take(40).collect::<String>())
+                    } else {
+                        tf!("Copy link {0}", u)
+                    };
+                    items.push(crate::ui::app::MenuItem::new(
+                        "link",
+                        label,
+                        move |_, cx| crate::ui::copy_to_clipboard(u2.clone(), cx),
+                    ));
+                }
+                crate::ui::app::open_menu(ev.position, items, window, cx);
+            },
+        )
         .into_any_element()
 }
 
@@ -533,12 +832,26 @@ const CLAMP_CHARS: usize = 400;
 /// The start of a long text (whole lines, then cut at a word), or None when it's short.
 pub(crate) fn clamp_text(text: &str, max_lines: usize, max_chars: usize) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    let mut out = lines.iter().take(max_lines).copied().collect::<Vec<_>>().join("
-");
+    let mut out = lines
+        .iter()
+        .take(max_lines)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
     let mut cut = lines.len() > max_lines;
     if out.chars().count() > max_chars {
-        let end = out.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(out.len());
-        let end = out[..end].rfind(char::is_whitespace).filter(|&i| i > end / 2).unwrap_or(end);
+        let end = out
+            .char_indices()
+            .nth(max_chars)
+            .map(|(i, _)| i)
+            .unwrap_or(out.len());
+        let end = out[..end]
+            .rfind(char::is_whitespace)
+            .filter(|&i| i > end / 2)
+            .unwrap_or(end);
         out.truncate(end);
         cut = true;
     }
@@ -547,13 +860,21 @@ pub(crate) fn clamp_text(text: &str, max_lines: usize, max_chars: usize) -> Opti
 
 /// A comment's text (with channel emojis) and the GIF or sticker posted with it.
 /// Long ones are cut to a few lines with "Read more".
-pub fn comment_body(id: impl Into<SharedString>, c: &crate::api::types::Comment, cx: &App) -> AnyElement {
+pub fn comment_body(
+    id: impl Into<SharedString>,
+    c: &crate::api::types::Comment,
+    cx: &App,
+) -> AnyElement {
     let id: SharedString = id.into();
     let p = pal(cx);
     let open = OPEN_COMMENTS.with(|o| o.borrow().contains(&id));
     let short = clamp_text(&c.text, CLAMP_LINES, CLAMP_CHARS);
     let long = short.is_some();
-    let text = if open { c.text.clone() } else { short.unwrap_or_else(|| c.text.clone()) };
+    let text = if open {
+        c.text.clone()
+    } else {
+        short.unwrap_or_else(|| c.text.clone())
+    };
     let toggle_id = id.clone();
     div()
         .flex()
@@ -588,7 +909,14 @@ pub fn comment_body(id: impl Into<SharedString>, c: &crate::api::types::Comment,
             let w = h * ratio;
             // the id gives the image the per-element state gpui keeps the
             // animation frame in; without one a GIF only ever shows its first frame
-            d.child(img(SharedUri::from(url)).id(SharedString::from(format!("{id}-img"))).w(px(w)).h(px(h)).rounded_lg().object_fit(ObjectFit::Contain))
+            d.child(
+                img(SharedUri::from(url))
+                    .id(SharedString::from(format!("{id}-img")))
+                    .w(px(w))
+                    .h(px(h))
+                    .rounded_lg()
+                    .object_fit(ObjectFit::Contain),
+            )
         })
         .into_any_element()
 }
@@ -599,10 +927,18 @@ mod clamp_tests {
     #[test]
     fn clamps() {
         assert_eq!(clamp_text("short", 5, 400), None);
-        assert_eq!(clamp_text("a
+        assert_eq!(
+            clamp_text(
+                "a
 b
-c", 2, 400).as_deref(), Some("a
-b…"));
+c", 2, 400
+            )
+            .as_deref(),
+            Some(
+                "a
+b…"
+            )
+        );
         let long = "word ".repeat(200);
         let c = clamp_text(&long, 5, 400).unwrap();
         assert!(c.chars().count() <= 401 && c.ends_with("word…"));
@@ -615,9 +951,18 @@ b…"));
         let text = "Watch [this] at 1:23\r\n#Playlist";
         let playlist_start = text.find('#').unwrap();
         let links = [
-            DescriptionLink { range: 6..12, url: "https://www.youtube.com/watch?v=_0do0jAoJt8".into() },
-            DescriptionLink { range: playlist_start..text.len() + 10, url: "https://www.youtube.com/playlist?list=PLExample".into() },
-            DescriptionLink { range: text.len() + 1..text.len() + 4, url: "https://www.youtube.com/playlist?list=PLOutside".into() },
+            DescriptionLink {
+                range: 6..12,
+                url: "https://www.youtube.com/watch?v=_0do0jAoJt8".into(),
+            },
+            DescriptionLink {
+                range: playlist_start..text.len() + 10,
+                url: "https://www.youtube.com/playlist?list=PLExample".into(),
+            },
+            DescriptionLink {
+                range: text.len() + 1..text.len() + 4,
+                url: "https://www.youtube.com/playlist?list=PLOutside".into(),
+            },
         ];
         let md = to_markdown(text, &rich_text_tokens(text, &links));
         assert!(md.contains(r"[\[this\]](<https://www.youtube.com/watch?v=_0do0jAoJt8>)"));
@@ -629,5 +974,11 @@ b…"));
 
 /// First timestamp ("1:23", "1:02:03") mentioned in a text, in seconds.
 pub fn first_timestamp(text: &str) -> Option<f64> {
-    tokenize(text).into_iter().find_map(|(_, t)| if let Token::Time(s) = t { Some(s) } else { None })
+    tokenize(text).into_iter().find_map(|(_, t)| {
+        if let Token::Time(s) = t {
+            Some(s)
+        } else {
+            None
+        }
+    })
 }
