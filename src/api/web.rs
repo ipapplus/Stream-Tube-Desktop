@@ -133,8 +133,33 @@ pub fn write_cookies_file() -> Option<PathBuf> {
         opts.mode(0o600);
     }
     use std::io::Write;
-    opts.open(&path).ok()?.write_all(text.as_bytes()).ok()?;
+    if opts.open(&path).ok()?.write_all(text.as_bytes()).is_err() {
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
     Some(path)
+}
+
+/// Deletes cookie files a crashed run left behind (they hold the sign-in).
+pub fn sweep_cookie_files() {
+    let Ok(dir) = std::fs::read_dir(crate::store::data_dir()) else {
+        return;
+    };
+    for e in dir.flatten() {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        let Some(rest) = name
+            .strip_prefix("yt-dlp-cookies-")
+            .filter(|_| name.ends_with(".txt"))
+        else {
+            continue;
+        };
+        // a file of another window that is still running stays
+        let pid = rest.split('-').next().and_then(|p| p.parse::<u32>().ok());
+        if pid.is_none_or(|p| p == std::process::id() || !crate::links::process_alive(p)) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 fn cookie_header(session: &Session) -> String {
@@ -640,6 +665,12 @@ fn youtube_cookies(list: &[Value]) -> BTreeMap<String, String> {
 
 /// Opens a browser window for the user to sign in to YouTube and waits until they
 /// have. Returns the account name. `cancel` stops waiting and closes the browser.
+///
+/// Google refuses to sign in a browser that is controlled over DevTools ("This
+/// browser or app may not be secure"), so this is done in two steps on the same
+/// temporary profile: the user signs in in a plain browser window, and once that
+/// window is closed a hidden (headless) copy of the browser reads the cookies and
+/// the selected channel over the private DevTools pipes.
 pub fn browser_sign_in(
     cancel: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
@@ -648,69 +679,20 @@ pub fn browser_sign_in(
     let (_, exe) = find_browser().ok_or_else(|| {
         anyhow!("No supported browser found. Install Google Chrome, Microsoft Edge, Brave or Chromium, or import a cookies.txt file instead.")
     })?;
-    let profile = crate::store::data_dir().join("signin-browser");
-    let _ = std::fs::remove_dir_all(&profile);
-    std::fs::create_dir_all(&profile)?;
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.arg(format!("--user-data-dir={}", profile.display()))
-        .args([
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-sync",
-            "--new-window",
-        ])
-        .arg(SIGN_IN_URL);
-    if let Some(p) = crate::store::proxy_setting() {
-        cmd.arg(format!("--proxy-server={p}"));
+    // the profile folder older versions used
+    let _ = std::fs::remove_dir_all(crate::store::data_dir().join("signin-browser"));
+    let profile =
+        crate::store::data_dir().join(format!("signin-browser-{:016x}", rand::random::<u64>()));
+    let mut dir = std::fs::DirBuilder::new();
+    dir.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        dir.mode(0o700);
     }
-    let (mut cdp, browser_ends) = Cdp::attach(&mut cmd)?;
-    let mut child = cmd.spawn().context("couldn't start the browser")?;
-    drop(browser_ends);
-    let started = Instant::now();
-    let result = loop {
-        std::thread::sleep(Duration::from_millis(1500));
-        if cancel.load(Ordering::Relaxed) {
-            break Err(anyhow!("cancelled"));
-        }
-        if let Ok(Some(_)) = child.try_wait() {
-            // the user closed the window; the browser may have handed off to an
-            // already running copy, but with our own profile that doesn't happen
-            break Err(anyhow!("The browser was closed before sign-in finished."));
-        }
-        if started.elapsed() > Duration::from_secs(20 * 60) {
-            break Err(anyhow!("Sign-in timed out."));
-        }
-        let Ok(list) = cdp.cookies() else { continue };
-        let cookies = youtube_cookies(&list);
-        if has_login(&cookies) && cookies.contains_key("LOGIN_INFO") {
-            let Ok(page_id) = cdp.selected_page_id() else {
-                continue;
-            };
-            ready.store(true, Ordering::Relaxed);
-            if !confirmed.load(Ordering::Relaxed) {
-                continue;
-            }
-            let Ok(list) = cdp.cookies() else { continue };
-            let cookies = youtube_cookies(&list);
-            if has_login(&cookies)
-                && cookies.contains_key("LOGIN_INFO")
-                && cdp
-                    .selected_page_id()
-                    .is_ok_and(|current| current == page_id)
-            {
-                break Ok((cookies, page_id));
-            }
-        }
-    };
-    cdp.close_browser();
-    for _ in 0..20 {
-        if let Ok(Some(_)) = child.try_wait() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+    dir.create(&profile)?;
+    let result = sign_in_window(&exe, &profile, &cancel, &ready, &confirmed)
+        .and_then(|()| read_signed_in_profile(&exe, &profile, &cancel));
     for _ in 0..8 {
         if std::fs::remove_dir_all(&profile).is_ok() || !profile.exists() {
             break;
@@ -720,6 +702,211 @@ pub fn browser_sign_in(
     let (cookies, page_id) = result?;
     anyhow::ensure!(!cancel.load(Ordering::Relaxed), "cancelled");
     connect(cookies, page_id)
+}
+
+fn sign_in_command(exe: &std::path::Path, profile: &std::path::Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg(format!("--user-data-dir={}", profile.display()))
+        .args([
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+        ]);
+    // the window and the headless copy must encrypt cookies with the same key
+    #[cfg(target_os = "linux")]
+    cmd.arg("--password-store=basic");
+    #[cfg(target_os = "macos")]
+    cmd.arg("--use-mock-keychain");
+    if let Some(p) = crate::store::proxy_setting() {
+        cmd.arg(format!("--proxy-server={p}"));
+    }
+    cmd
+}
+
+/// Step one: a plain browser window, with nothing attached to it, for the user to
+/// sign in. Returns once they have signed in and chose the channel (or closed the
+/// window after signing in); the window is closed so the browser saves its cookies.
+fn sign_in_window(
+    exe: &std::path::Path,
+    profile: &std::path::Path,
+    cancel: &AtomicBool,
+    ready: &AtomicBool,
+    confirmed: &AtomicBool,
+) -> Result<()> {
+    let mut child = sign_in_command(exe, profile)
+        .args(["--new-window", SIGN_IN_URL])
+        .spawn()
+        .context("couldn't start the browser")?;
+    let started = Instant::now();
+    let result = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        if cancel.load(Ordering::Relaxed) {
+            break Err(anyhow!("cancelled"));
+        }
+        let signed_in = profile_has_login(profile);
+        if signed_in {
+            ready.store(true, Ordering::Relaxed);
+            if confirmed.load(Ordering::Relaxed) {
+                break Ok(());
+            }
+        }
+        if let Ok(Some(_)) = child.try_wait() {
+            // closing the window after signing in is as good as confirming
+            break if signed_in || profile_has_login(profile) {
+                Ok(())
+            } else {
+                Err(anyhow!("The browser was closed before sign-in finished."))
+            };
+        }
+        if started.elapsed() > Duration::from_secs(20 * 60) {
+            break Err(anyhow!("Sign-in timed out."));
+        }
+    };
+    close_gracefully(&mut child);
+    result
+}
+
+/// Asks the browser to close its windows, as clicking X would, so it writes its
+/// cookies to disk; it is killed if it hasn't gone after a few seconds.
+fn close_gracefully(child: &mut std::process::Child) {
+    if !matches!(child.try_wait(), Ok(Some(_))) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &child.id().to_string()])
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &child.id().to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+    wait_for_browser_exit(child);
+}
+
+fn wait_for_browser_exit(child: &mut std::process::Child) {
+    for _ in 0..40 {
+        if let Ok(Some(_)) = child.try_wait() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Whether the profile's cookie store holds a signed-in YouTube session. Only the
+/// cookie names are read; the values stay encrypted on disk.
+fn profile_has_login(profile: &std::path::Path) -> bool {
+    ["Default/Network/Cookies", "Default/Cookies"].iter().any(|file| {
+        let path = profile.join(file);
+        if !path.is_file() {
+            return false;
+        }
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let Ok(db) = rusqlite::Connection::open_with_flags(&path, flags) else { return false };
+        let _ = db.busy_timeout(Duration::from_millis(200));
+        let Ok(mut query) = db.prepare("SELECT name FROM cookies WHERE host_key IN ('.youtube.com', 'youtube.com', 'www.youtube.com')") else {
+            return false;
+        };
+        let Ok(rows) = query.query_map([], |r| r.get::<_, String>(0)) else { return false };
+        let names: Vec<String> = rows.filter_map(Result::ok).collect();
+        cookie_names_signed_in(&names)
+    })
+}
+
+fn cookie_names_signed_in(names: &[String]) -> bool {
+    let has = |name: &str| names.iter().any(|n| n == name);
+    has("LOGIN_INFO")
+        && (has("SAPISID") || has("__Secure-3PAPISID"))
+        && (has("SID") || has("__Secure-3PSID"))
+}
+
+/// Step two: the same profile in a headless browser, which DevTools may control,
+/// reads the cookies and the channel the user picked on youtube.com.
+fn read_signed_in_profile(
+    exe: &std::path::Path,
+    profile: &std::path::Path,
+    cancel: &AtomicBool,
+) -> Result<(BTreeMap<String, String>, Option<String>)> {
+    let mut cmd = sign_in_command(exe, profile);
+    cmd.args(["--headless=new", ORIGIN]);
+    let (mut cdp, browser_ends) = Cdp::attach(&mut cmd)?;
+    let mut child = cmd.spawn().context("couldn't start the browser")?;
+    drop(browser_ends);
+    let started = Instant::now();
+    let mut found: Option<BTreeMap<String, String>> = None;
+    let result = loop {
+        std::thread::sleep(Duration::from_millis(500));
+        if cancel.load(Ordering::Relaxed) {
+            break Err(anyhow!("cancelled"));
+        }
+        if let Ok(Some(_)) = child.try_wait() {
+            break Err(anyhow!(
+                "The browser closed before the sign-in could be read."
+            ));
+        }
+        if found.is_none() {
+            if let Ok(list) = cdp.cookies() {
+                let cookies = youtube_cookies(&list);
+                if has_login(&cookies) && cookies.contains_key("LOGIN_INFO") {
+                    found = Some(cookies);
+                }
+            }
+        }
+        if let Some(cookies) = &found {
+            // the channel picked in the window; the account's default if the page won't say
+            match cdp.selected_page_id() {
+                Ok(page_id) => break Ok((cookies.clone(), page_id)),
+                Err(_) if started.elapsed() > Duration::from_secs(25) => {
+                    break Ok((cookies.clone(), None));
+                }
+                Err(_) => {}
+            }
+        }
+        if started.elapsed() > Duration::from_secs(30) {
+            break Err(anyhow!(
+                "Couldn't read the YouTube sign-in from the browser. Try again, or import a cookies.txt file instead."
+            ));
+        }
+    };
+    cdp.close_browser();
+    wait_for_browser_exit(&mut child);
+    result
+}
+
+#[cfg(test)]
+mod sign_in_cookie_tests {
+    #[test]
+    fn needs_login_info_and_both_session_cookies() {
+        let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(super::cookie_names_signed_in(&names(&[
+            "LOGIN_INFO",
+            "SAPISID",
+            "SID",
+            "PREF"
+        ])));
+        assert!(super::cookie_names_signed_in(&names(&[
+            "LOGIN_INFO",
+            "__Secure-3PAPISID",
+            "__Secure-3PSID"
+        ])));
+        assert!(!super::cookie_names_signed_in(&names(&["SAPISID", "SID"])));
+        assert!(!super::cookie_names_signed_in(&names(&[
+            "LOGIN_INFO",
+            "PREF",
+            "VISITOR_INFO1_LIVE"
+        ])));
+    }
 }
 
 /// Reads a Netscape-format cookies.txt (as saved by "Get cookies.txt" style

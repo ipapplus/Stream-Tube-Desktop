@@ -1,9 +1,9 @@
 ; Stream Tube installer (Inno Setup 6)
-; Build:  ISCC.exe /DAppVersion=0.7.5-alpha installer\streamtube.iss
+; Build:  ISCC.exe /DAppVersion=1.0.0 installer\streamtube.iss
 ; Needs a release build in target\release and libmpv-2.dll in third_party\mpv.
 
 #ifndef AppVersion
-  #define AppVersion "0.7.5-alpha"
+  #define AppVersion "1.0.0"
 #endif
 #define AppName "Stream Tube"
 #define AppExe "streamtube.exe"

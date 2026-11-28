@@ -89,6 +89,11 @@ pub struct Player {
     pub queue: Vec<VideoItem>,
     pub queue_pos: Option<usize>,
     pub(crate) autoplay_next: Option<VideoItem>,
+    /// Videos played before the current one in this session, newest last,
+    /// for "previous" when there is no queue to step back through.
+    played_before: Vec<VideoItem>,
+    /// The video "previous" is going back to, whose `play` isn't remembered.
+    going_back: Option<String>,
     queue_serial: u64,
     queue_shuffle: bool,
     queue_scroll_y: Option<(u64, Pixels)>,
@@ -108,6 +113,8 @@ pub struct Player {
     pub storyboard: Option<Storyboard>,
     last_prop_notify: std::time::Instant,
     fallback_tried: bool,
+    /// times a live stream reached its end and was joined again (#264)
+    live_rejoins: u32,
     frame_progress: Option<FrameProgress>,
     hold_picture: Option<u64>,
     playback_timing: Option<(&'static str, Instant)>,
@@ -158,6 +165,9 @@ pub(crate) fn tab_players(cx: &App) -> Vec<Entity<Player>> {
         .filter_map(WeakEntity::upgrade)
         .collect()
 }
+
+/// How many videos back "previous" can go.
+const PLAYED_BEFORE_LIMIT: usize = 50;
 
 pub fn enqueue(v: VideoItem, cx: &mut App) {
     player(cx).update(cx, |p, cx| {
@@ -261,6 +271,8 @@ impl Player {
             queue: Vec::new(),
             queue_pos: None,
             autoplay_next: None,
+            played_before: Vec::new(),
+            going_back: None,
             queue_serial: 0,
             queue_shuffle: false,
             queue_scroll_y: None,
@@ -277,6 +289,7 @@ impl Player {
             storyboard: None,
             last_prop_notify: std::time::Instant::now(),
             fallback_tried: false,
+            live_rejoins: 0,
             frame_progress: None,
             hold_picture: None,
             playback_timing: None,
@@ -707,6 +720,14 @@ impl Player {
             .as_ref()
             .and_then(|mpv| mpv.get_f64("time-pos"))
             .unwrap_or(self.time);
+        if live && self.live_rejoins < 5 && !self.loop_video {
+            // A live HLS playlist can stop refreshing mid-stream (the URL
+            // expired, a reload failed) and mpv reports the end. Ask YouTube
+            // again: still live means join it again, ended means play on.
+            self.live_rejoins += 1;
+            self.rejoin_live(cx);
+            return;
+        }
         if !live && premature_eof(position, self.duration) {
             self.time = position;
             self.error = Some("Playback stopped before the end of the video.".into());
@@ -811,6 +832,29 @@ impl Player {
             }
         })
         .detach();
+    }
+
+    /// Remembers the video being left for `next`, unless "previous" is going back.
+    fn remember_played(&mut self, next: &VideoItem) {
+        let going_back = self.going_back.take().is_some_and(|id| id == next.id);
+        let Some(current) = self.video.clone() else {
+            return;
+        };
+        // Shorts are swiped through, not watched one after another
+        if going_back || current.id == next.id || current.is_short || next.is_short {
+            return;
+        }
+        self.played_before.retain(|v| v.id != current.id);
+        self.played_before.push(current);
+        let excess = self.played_before.len().saturating_sub(PLAYED_BEFORE_LIMIT);
+        self.played_before.drain(..excess);
+    }
+
+    /// The video "previous" goes back to; the `play` that follows isn't remembered.
+    pub(crate) fn take_played_before(&mut self) -> Option<VideoItem> {
+        let v = self.played_before.pop()?;
+        self.going_back = Some(v.id.clone());
+        Some(v)
     }
 
     pub fn replace_queue(&mut self, queue: Vec<VideoItem>, pos: Option<usize>) {
@@ -1083,6 +1127,7 @@ impl Player {
     }
 
     pub fn play(&mut self, video: VideoItem, start: Option<f64>, cx: &mut Context<Self>) {
+        self.remember_played(&video);
         self.autoplay_next = None;
         self.playback_timing =
             std::env::var_os("STREAMTUBE_PLAYBACK_TIMING").map(|_| ("open", Instant::now()));
@@ -1099,6 +1144,7 @@ impl Player {
         };
         self.load_serial += 1;
         self.fallback_tried = false;
+        self.live_rejoins = 0;
         self.recovering_picture = false;
         self.frame_progress = None;
         let serial = self.load_serial;
@@ -1251,6 +1297,40 @@ impl Player {
                     p.annotations = Arc::new(list);
                     cx.notify();
                 }
+            });
+        })
+        .detach();
+    }
+
+    /// A live stream stopped: resolve it again and keep playing if it is still on air.
+    fn rejoin_live(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.video.as_ref().map(|v| v.id.clone()) else {
+            return;
+        };
+        streams::invalidate(&id);
+        let serial = self.load_serial;
+        self.loading = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let res = blocking(move || streams::get_streams(&id)).await;
+            let _ = this.update(cx, |p, cx| {
+                if p.load_serial != serial {
+                    return;
+                }
+                match res {
+                    Ok(info) if info.is_live && info.hls_url.is_some() => {
+                        p.streams = Some(Arc::new(info));
+                        p.load_current(None, false, cx);
+                    }
+                    _ => {
+                        // the broadcast ended: carry on as a finished video
+                        p.loading = false;
+                        p.live_rejoins = u32::MAX;
+                        p.on_ended(cx);
+                    }
+                }
+                p.sync_idle(cx);
+                cx.notify();
             });
         })
         .detach();
@@ -1496,7 +1576,9 @@ impl Player {
         };
         let _ = mpv.command(&["sub-remove"]);
         if let Some(c) = self.caption.and_then(|i| info.captions.get(i)) {
-            let url = if crate::store::proxy_setting().is_some() {
+            let url = if !info.is_live {
+                crate::player::proxy::local_caption(&c.url)
+            } else if crate::store::proxy_setting().is_some() {
                 crate::player::proxy::local_pass(&c.url)
             } else {
                 c.url.clone()
@@ -2076,6 +2158,7 @@ impl Player {
         self.streams = None;
         self.loading = false;
         self.autoplay_next = None;
+        self.played_before.clear();
         self.reset_queue();
         if let Some(old) = self.frame.take() {
             cx.drop_image(old, None);

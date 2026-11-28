@@ -1006,6 +1006,7 @@ impl Render for ShortsPage {
             .text_base()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(color)
+            .text_ellipsis()
             .line_clamp(if below { 2 } else { 4 })
         };
         let video_column = |video: Div| {
@@ -1337,6 +1338,15 @@ impl Render for ShortsPage {
                         votes
                             .as_ref()
                             .map(|v| vote_label(MetricKind::Likes, v.likes))
+                            .or_else(|| {
+                                self.meta
+                                    .get(&v.id)
+                                    .and_then(|w| w.likes_text.clone())
+                                    .filter(|s| s.chars().any(|c| c.is_ascii_digit()))
+                                    .map(|s| {
+                                        metrics::from_text(MetricKind::Likes, Some(&s)).unwrap_or(s)
+                                    })
+                            })
                             .unwrap_or_else(|| t("Like").into()),
                         cx,
                     ))

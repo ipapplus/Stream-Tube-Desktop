@@ -58,6 +58,17 @@ pub fn prefetch_on_hover(video_id: &str) {
 
 fn resolve(video_id: &str) -> Result<StreamInfo> {
     let res = resolve_anonymous(video_id);
+    let res = match res {
+        // the TV client answers live streams without an HLS manifest, and live
+        // playback needs one: "No playable stream found" (#268)
+        Ok(info) if info.is_live && info.hls_url.is_none() => visionos(video_id)
+            .or_else(|_| ios(video_id))
+            .ok()
+            .filter(|i| i.hls_url.is_some())
+            .map(Ok)
+            .unwrap_or(Ok(info)),
+        other => other,
+    };
     with_sign_in_fallback(video_id, res)
 }
 
@@ -125,6 +136,13 @@ fn resolve_anonymous(video_id: &str) -> Result<StreamInfo> {
             let vision_err = match ios(video_id) {
                 Ok(info) => return Ok(info),
                 Err(e) => anyhow!("{vision_err}\n{e}"),
+            };
+            let vision_err = match android(video_id) {
+                Ok(info) => return Ok(info),
+                Err(e) => anyhow!(
+                    "{vision_err}
+{e}"
+                ),
             };
             let vision_err = if signed_in {
                 vision_err
@@ -590,6 +608,49 @@ fn android_vr(video_id: &str) -> Result<StreamInfo> {
     }
     let mut info = parse_player(&r);
     info.source = "innertube";
+    Ok(info)
+}
+
+const ANDROID_VERSION: &str = "20.10.38";
+const ANDROID_UA: &str = "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip";
+
+/// The YouTube Android app. Since late 2026 it is the one anonymous client still
+/// served videos made for kids (iOS and visionOS get no manifest), though only
+/// as a 360p file with sound.
+fn android(video_id: &str) -> Result<StreamInfo> {
+    let s = crate::store::settings_snapshot();
+    let vd = visitor_data().unwrap_or_default();
+    let body = json!({
+        "videoId": video_id,
+        "contentCheckOk": true,
+        "racyCheckOk": true,
+        "context": { "client": {
+            "clientName": "ANDROID", "clientVersion": ANDROID_VERSION,
+            "androidSdkVersion": 30, "osName": "Android", "osVersion": "11",
+            "hl": s.language, "gl": s.region, "visitorData": vd
+        }}
+    });
+    let r = http::post_json(
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+        &body,
+        &[
+            ("User-Agent", ANDROID_UA),
+            ("X-YouTube-Client-Name", "3"),
+            ("X-YouTube-Client-Version", ANDROID_VERSION),
+            ("X-Goog-Visitor-Id", &vd),
+        ],
+    )?;
+    if let Some(err) = playability_error(&r, Some("Android")) {
+        return Err(err);
+    }
+    let mut info = parse_player(&r);
+    // its separate video and audio need a PO token; the muxed file doesn't
+    info.video.clear();
+    info.audio.clear();
+    info.source = "android";
+    if info.muxed.is_empty() && info.hls_url.is_none() {
+        return Err(anyhow!("Android: no playable formats"));
+    }
     Ok(info)
 }
 
@@ -1195,7 +1256,7 @@ pub(crate) fn verification_requested(error: &str) -> bool {
         || e.contains("age_check_required")
 }
 
-fn needs_sign_in(error: &str) -> bool {
+pub(crate) fn needs_sign_in(error: &str) -> bool {
     let e = error.to_ascii_lowercase();
     verification_requested(&e)
         || e.contains("sign in to")
@@ -1243,6 +1304,8 @@ fn ytdlp_streams_with(video_id: &str, cookies: Option<&std::path::Path>) -> Resu
     if crate::store::settings_snapshot().ipv4_only {
         cmd.arg("--force-ipv4");
     }
+    cmd.args(crate::api::jsc::ytdlp_runtime_args());
+    cmd.env("PYTHONIOENCODING", "utf-8");
     cmd.arg(format!("https://www.youtube.com/watch?v={video_id}"));
     hide_window(&mut cmd);
     let out = cmd.output()?;
@@ -1253,6 +1316,7 @@ fn ytdlp_streams_with(video_id: &str, cookies: Option<&std::path::Path>) -> Resu
             .args(cmd.get_args())
             .arg("--extractor-args")
             .arg(crate::downloads::YTDLP_IOS);
+        retry.env("PYTHONIOENCODING", "utf-8");
         hide_window(&mut retry);
         if let Ok(o) = retry.output() {
             if let Ok(info) = ytdlp_inventory(video_id, &o) {
@@ -1842,6 +1906,13 @@ mod kids_tests {
             info.video.len(),
             info.hls_url.is_some()
         );
+        if info.source == "android" {
+            // YouTube stopped giving iOS a manifest for these: a 360p file with sound
+            let m = info.muxed.first().expect("muxed format");
+            let bytes = super::http::get_bytes(&format!("{}&range=0-200000", m.url), &[]).unwrap();
+            assert!(bytes.len() > 100_000, "{}", bytes.len());
+            return;
+        }
         assert!(info.hls_only && !info.video.is_empty());
         let best = info.video.iter().max_by_key(|f| f.height).unwrap();
         assert!(best.height >= 720, "{}", best.height);

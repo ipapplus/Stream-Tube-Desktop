@@ -1105,6 +1105,7 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
     }
     let mut tabs = Vec::new();
     let mut page = Page::default();
+    let mut sort_chips = Vec::new();
     if let Some(arr) = r
         .pointer("/contents/twoColumnBrowseResultsRenderer/tabs")
         .and_then(Value::as_array)
@@ -1120,6 +1121,7 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
             if selected {
                 if let Some(content) = tr.get("content") {
                     page = collect_items(content);
+                    sort_chips = parse_sort_chips(content);
                 }
             }
             if !title.is_empty() {
@@ -1152,7 +1154,51 @@ pub fn channel(channel_id: &str, tab_params: Option<&str>) -> Result<ChannelPage
         banner,
         tabs,
         page,
+        sort_chips,
     })
+}
+
+/// The Latest / Popular / Oldest chips over a channel's videos, live or Shorts grid.
+fn parse_sort_chips(content: &Value) -> Vec<SortChip> {
+    let mut out = Vec::new();
+    let mut chips = Vec::new();
+    find_all(content, "chipViewModel", &mut chips);
+    for c in chips {
+        let title = s(c, "/text").unwrap_or_default();
+        let mut tokens = Vec::new();
+        if let Some(cmd) = c.get("tapCommand") {
+            find_all(cmd, "token", &mut tokens);
+        }
+        if let (false, Some(token)) = (title.is_empty(), tokens.iter().find_map(|t| t.as_str())) {
+            out.push(SortChip {
+                title,
+                token: token.to_string(),
+                selected: c.get("selected").and_then(Value::as_bool).unwrap_or(false),
+            });
+        }
+    }
+    if out.is_empty() {
+        // the older form
+        let mut chips = Vec::new();
+        find_all(content, "chipCloudChipRenderer", &mut chips);
+        for c in chips {
+            let title = opt_text(c.get("text")).unwrap_or_default();
+            let token = c
+                .pointer("/navigationEndpoint/continuationCommand/token")
+                .and_then(Value::as_str);
+            if let (false, Some(token)) = (title.is_empty(), token) {
+                out.push(SortChip {
+                    title,
+                    token: token.to_string(),
+                    selected: c
+                        .get("isSelected")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// A channel tab's kind from its URL ("/@name/videos" -> "videos"). Titles follow

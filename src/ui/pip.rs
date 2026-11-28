@@ -1,6 +1,6 @@
 //! Picture-in-picture: the player in a small always-on-top window that stays
 //! visible over other apps.
-use crate::player::controller::{Player, player};
+use crate::player::controller::{KeyboardFeedback, Player, player};
 use crate::player::view::PlayerView;
 use crate::ui::*;
 
@@ -10,6 +10,8 @@ impl Global for PipWindow {}
 
 pub struct PipView {
     view: Entity<PlayerView>,
+    player: Entity<Player>,
+    focus: FocusHandle,
 }
 
 pub fn handle(cx: &App) -> Option<AnyWindowHandle> {
@@ -57,14 +59,20 @@ pub fn open(cx: &mut App) {
         inactive_frame_interval: None,
         ..Default::default()
     };
-    let res = gpui_kit::open_window(opts, cx, |_window, cx| {
+    let res = gpui_kit::open_window(opts, cx, |window, cx| {
         let pl = active.clone();
         let view = cx.new(|cx| {
-            let mut v = PlayerView::new(pl, false, cx);
+            let mut v = PlayerView::new(pl.clone(), false, cx);
             v.pip = true;
             v
         });
-        cx.new(|_| PipView { view })
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        cx.new(|_| PipView {
+            view,
+            player: pl,
+            focus,
+        })
     });
     match res {
         Ok((h, _)) => {
@@ -186,11 +194,74 @@ fn placeholder() -> impl IntoElement {
         )
 }
 
+impl PipView {
+    /// The main window's playback keys, for when the PiP window has the focus.
+    fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let m = &ev.keystroke.modifiers;
+        if m.control || m.platform || m.alt {
+            return;
+        }
+        let k = super::app::shortcut_key(&ev.keystroke.key);
+        if k == "escape" {
+            close(window, cx);
+            return;
+        }
+        let key = match ev.keystroke.key_char.as_deref() {
+            Some(c @ ("-" | "+" | "<" | ">")) => c,
+            _ => k,
+        };
+        let step = crate::store::settings_snapshot().seek_step;
+        let handled = self.player.update(cx, |pl, cx| {
+            if pl.video.is_none() {
+                return false;
+            }
+            match (key, m.shift) {
+                ("space", _) | ("k", false) => {
+                    if !ev.is_held {
+                        pl.toggle_pause(cx);
+                    }
+                }
+                ("j", false) => pl.seek_by(-10.0),
+                ("l", false) => pl.seek_by(10.0),
+                ("left" | "right", _) => {
+                    let before = pl.time;
+                    pl.seek_by(if key == "left" { -step } else { step });
+                    pl.show_keyboard_feedback(KeyboardFeedback::Seek(pl.time - before), cx);
+                }
+                ("up" | "down", _) => {
+                    pl.set_volume(pl.volume + if key == "up" { 5.0 } else { -5.0 });
+                    pl.show_keyboard_feedback(KeyboardFeedback::Volume(pl.volume), cx);
+                }
+                ("m", false) => pl.toggle_mute(),
+                ("," | "." | "=", true) | ("<" | ">" | "-" | "+", _) => {
+                    pl.step_speed(matches!(key, "." | "=" | ">" | "+"));
+                    crate::ui::toast(
+                        cx,
+                        crate::i18n::tf!("Speed {0}x", format_args!("{:.2}", pl.speed)),
+                    );
+                }
+                _ => return false,
+            }
+            cx.notify();
+            true
+        });
+        if handled {
+            cx.stop_propagation();
+        }
+    }
+}
+
 impl Render for PipView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("pip")
             .group("pip")
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
+            )
             .relative()
             .size_full()
             .bg(black())

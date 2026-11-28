@@ -1,4 +1,8 @@
 {
+  "File name": "Fayl adı",
+  "Use {title}, {channel} and {id}. Leave empty for the default": "{title}, {channel} və {id} istifadə edin. Standart ad üçün boş saxlayın",
+  "If Google says the browser or app may not be secure, use a cookies.txt file exported from a browser where you're signed in.": "Google brauzerin və ya tətbiqin təhlükəsiz olmaya biləcəyini desə, hesabınıza daxil olduğunuz brauzerdən ixrac edilmiş cookies.txt faylından istifadə edin.",
+  "Nothing to import in this file": "Bu faylda idxal ediləcək heç nə yoxdur",
   "Write a reply": "Cavab yazın",
   "Write a comment": "Şərh yazın",
   "Reply posted": "Cavab dərc edildi",
@@ -116,6 +120,7 @@
   "Compact": "Yığcam",
   "Comfortable": "Rahat",
   "Thumbnail corners": "Miniatür küncləri",
+  "Up next thumbnail size": "“Növbəti” bölməsində miniatürlərin ölçüsü",
   "Square": "Düz künclər",
   "Small": "Kiçik",
   "Rounded": "Dairəvi",
@@ -127,6 +132,8 @@
   "Region": "Region",
   "Trending, Explore and search results": "Trending, Explorer və axtarış nəticələri",
   "Titles, dates and YouTube's text": "YouTube-dan gələn başlıqlar, tarixlər və digər mətnlər",
+  "Full-height theater mode": "Kinoteatr rejimində tam hündürlük",
+  "Fit the video in the space below the top bar and tabs.": "Videonu üst panelin və vərəqlərin altındakı sahəyə yerləşdirir.",
   "Default quality": "Standart keyfiyyət",
   "Maximum resolution to start videos at": "Video başlayanda istifadə olunan ən yüksək ayırdetmə qabiliyyəti",
   "Preferred codec": "Üstünlük verilən kodek",
@@ -384,6 +391,7 @@
   "Channel blocked. Manage in Settings → Content filters": "Kanal bloklanıb. Qurğular → Məzmun filtrləri-də idarə et",
   "Remove from history": "Keçmişdən sil",
   "Remove from playlist": "Pleylistdən sil",
+  "Remove from Watch later": "«Sonra izlə» siyahısından sil",
   "Remove from queue": "Növbədən çıxar",
   "Couldn't update the subscription on your YouTube account": "YouTube hesabınızda abunəlik yenilənmədi",
   "Subscribed": "Abunə olunub",
@@ -875,5 +883,10 @@
 "Picture-in-picture above other apps": "Digər tətbiqlərin üzərində şəkil içində şəkil",
   "Copied to clipboard": "Mübadilə buferinə kopyalandı",
   "Copy title": "Başlığı kopyala",
-  "Copy channel name": "Kanal adını kopyala"
+  "Copy channel name": "Kanal adını kopyala",
+  "Music mode": "Musiqi rejimi",
+  "Leave music mode": "Musiqi rejimindən çıx",
+  "Playing from": "Buradan oxudulur",
+  "Song": "Mahnı",
+  "Listening to music? Music mode shows the cover art and keeps the player at the bottom.": "Musiqi dinləyirsiniz? Musiqi rejimi albom üzlüyünü göstərir və pleyeri aşağıda saxlayır."
 }

@@ -39,6 +39,18 @@ fn port_file() -> std::path::PathBuf {
     crate::store::data_dir().join("instance")
 }
 
+/// Whether another copy of the app is running, going by the file it wrote at start.
+pub fn other_instance_running() -> bool {
+    let Ok(s) = std::fs::read_to_string(port_file()) else {
+        return false;
+    };
+    let pid = s
+        .split_whitespace()
+        .nth(1)
+        .and_then(|p| p.parse::<u32>().ok());
+    pid.is_some_and(|p| p != std::process::id() && process_alive(p))
+}
+
 /// Hands `arg` to an already running instance. True when one took it (this process should exit).
 pub fn forward_to_running(arg: &str) -> bool {
     let Ok(s) = std::fs::read_to_string(port_file()) else {
@@ -127,7 +139,7 @@ pub fn register_scheme() {
 }
 
 /// Whether a process with this id is running.
-fn process_alive(pid: u32) -> bool {
+pub(crate) fn process_alive(pid: u32) -> bool {
     #[cfg(windows)]
     {
         const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;

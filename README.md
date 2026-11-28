@@ -25,7 +25,7 @@
 
 I wanted YouTube on my desktop without keeping a browser tab open, and without the
 ads, autoplaying junk and sponsor reads. The existing options were either Electron
-apps that eat a gigabyte of RAM or web frontends that break every other week.
+apps or web frontends that break every other week.
 Stream Tube is a single native app: the UI is drawn on the GPU with
 [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), and video
 goes through libmpv, so it starts fast and scrolls smoothly even with big feeds.
@@ -59,6 +59,7 @@ goes through libmpv, so it starts fast and scrolls smoothly even with big feeds.
 - The picture-in-picture button opens the draggable in-app miniplayer or a floating window above other apps. Choose the mode in *Settings → Player*. Theater mode and fullscreen are also available, and the app remembers your theater setting.
 - Keeps playing when minimized, or pauses and resumes when you come back. On Windows, active video playback keeps the display awake.
 - Windows media controls can pause playback, resume it and move through the video queue.
+- Music: signed in, *Explore → Music* shows YouTube's music picks for your account, and each song plays on as its mix. Music mode, offered when a mix starts or from the player's note button, works like YouTube Music: a player bar along the bottom of every page and a *Now playing* view with the cover art or the video beside what plays next.
 - On Windows, *Settings → General → Minimize to tray* keeps Stream Tube in the notification area when you minimize or close the window. Use the tray icon to reopen or quit the app.
 - Start *Cast over LAN* in Settings and open the temporary link on a phone on the same trusted network. If the desktop has more than one local address, choose the one on your phone's network. Paste a YouTube video link to play it on the desktop.
 - Turn on *Independent tab playback* and restart Stream Tube to play up to three tabs at once. Each tab keeps its own queue. Background tabs play audio, and a tab with a floating picture-in-picture window keeps showing video there.
@@ -129,24 +130,6 @@ goes through libmpv, so it starts fast and scrolls smoothly even with big feeds.
 **Keeps itself up to date**
 - Checks for new releases at startup and installs them in one click, and can update yt-dlp for you. Every download is checked against its SHA-256 before it is used
 
-## Performance
-
-Stream Tube versus youtube.com in Microsoft Edge (clean profile, no extensions) on
-the same Windows 11 PC, playing the same video. Numbers are the working set of
-every process involved, after browsing a few pages.
-
-| | youtube.com in Edge | Stream Tube 0.4.0-alpha |
-|---|---|---|
-| Processes | 11–12 | 1 |
-| RAM, idle on Home | 1,073 MB | **~405 MB** |
-| RAM, playing a video | 1,203 MB | **~565 MB** |
-
-Stream Tube uses less than half the RAM of the browser, and it stays flat as you
-browse: thumbnails are kept at the size they're drawn and the ones you've scrolled
-past are freed. While playing, part of the memory is a read-ahead buffer that keeps
-seeking instant. Turn on *Settings → Player → Hardware decoding* to decode video on
-the GPU like the browser does. Results depend on the video, resolution and hardware.
-
 ## Screenshots
 
 <table>
@@ -192,21 +175,21 @@ Windows doesn't have one.
 **Debian, Ubuntu, Mint**: install the `.deb`. This also installs libmpv:
 
 ```sh
-sudo apt install ./streamtube_0.7.5-alpha_amd64.deb
+sudo apt install ./streamtube_1.0.0_amd64.deb
 ```
 
 **Fedora, openSUSE**: install the `.rpm`:
 
 ```sh
-sudo dnf install ./streamtube-0.7.5-alpha.x86_64.rpm
+sudo dnf install ./streamtube-1.0.0.x86_64.rpm
 ```
 
 **Any Linux (x86_64), nothing to install**: download the AppImage, make it executable
 and run it. libmpv is inside, so video plays without installing anything else:
 
 ```sh
-chmod +x StreamTube-0.7.5-alpha-x86_64.AppImage
-./StreamTube-0.7.5-alpha-x86_64.AppImage
+chmod +x StreamTube-1.0.0-x86_64.AppImage
+./StreamTube-1.0.0-x86_64.AppImage
 ```
 
 **Other Linux (x86_64), installed for your user**: unpack `StreamTube-<version>-linux-x86_64.tar.gz` and run
@@ -250,7 +233,7 @@ and each file has a signed build provenance attestation that ties it to the work
 run that built it. With the [GitHub CLI](https://cli.github.com):
 
 ```sh
-gh attestation verify StreamTube-0.7.5-alpha-setup.exe --repo Avaneesh-Inamdar/Stream-Tube-Desktop
+gh attestation verify StreamTube-1.0.0-setup.exe --repo Avaneesh-Inamdar/Stream-Tube-Desktop
 ```
 
 Check a download against those before running it. The in-app updater also checks
@@ -282,7 +265,7 @@ else, copy `libmpv-2.dll` next to it.
 To build the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run:
 
 ```powershell
-ISCC.exe /DAppVersion=0.7.5-alpha installer\streamtube.iss
+ISCC.exe /DAppVersion=1.0.0 installer\streamtube.iss
 ```
 
 It lands in `dist\`. On Linux, install the packages listed in

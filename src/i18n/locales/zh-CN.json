@@ -1,4 +1,8 @@
 {
+  "File name": "文件名",
+  "Use {title}, {channel} and {id}. Leave empty for the default": "可使用 {title}、{channel} 和 {id}。留空则使用默认名称",
+  "If Google says the browser or app may not be secure, use a cookies.txt file exported from a browser where you're signed in.": "如果 Google 提示此浏览器或应用可能不安全，请使用从已登录的浏览器导出的 cookies.txt 文件。",
+  "Nothing to import in this file": "此文件中没有可导入的内容",
   "Write a reply": "写回复",
   "Write a comment": "写评论",
   "Reply posted": "回复已发布",
@@ -116,6 +120,7 @@
   "Compact": "紧凑",
   "Comfortable": "宽松",
   "Thumbnail corners": "缩略图圆角",
+  "Up next thumbnail size": "“接下来”中的缩略图大小",
   "Square": "直角",
   "Small": "小",
   "Rounded": "圆角",
@@ -127,6 +132,8 @@
   "Region": "地区",
   "Trending, Explore and search results": "热门、探索和搜索结果",
   "Titles, dates and YouTube's text": "YouTube 提供的标题、日期和其他文本",
+  "Full-height theater mode": "影院模式使用完整高度",
+  "Fit the video in the space below the top bar and tabs.": "将视频适配到顶部栏和标签页下方的区域。",
   "Default quality": "默认画质",
   "Maximum resolution to start videos at": "开始播放视频时使用的最高分辨率",
   "Preferred codec": "首选编解码器",
@@ -384,6 +391,7 @@
   "Channel blocked. Manage in Settings → Content filters": "频道被阻止。 管理设置 → 内容过滤器",
   "Remove from history": "从历史中移除",
   "Remove from playlist": "从播放列表中移除",
+  "Remove from Watch later": "从稍后观看中移除",
   "Remove from queue": "从队列中移除",
   "Couldn't update the subscription on your YouTube account": "无法更新 YouTube 帐户上的订阅",
   "Subscribed": "已订阅",
@@ -875,5 +883,10 @@
 "Picture-in-picture above other apps": "画中画显示在其他应用上方",
   "Copied to clipboard": "已复制到剪贴板",
   "Copy title": "复制标题",
-  "Copy channel name": "复制频道名称"
+  "Copy channel name": "复制频道名称",
+  "Music mode": "音乐模式",
+  "Leave music mode": "退出音乐模式",
+  "Playing from": "播放来源",
+  "Song": "歌曲",
+  "Listening to music? Music mode shows the cover art and keeps the player at the bottom.": "在听音乐？音乐模式会显示封面，并把播放器固定在底部。"
 }

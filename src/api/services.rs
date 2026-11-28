@@ -204,6 +204,12 @@ pub fn ryd_votes(video_id: &str) -> Result<Votes> {
     let v = http::get_json(&format!(
         "https://returnyoutubedislikeapi.com/votes?videoId={video_id}"
     ))?;
+    // a video RYD hasn't seen yet comes back with every count at zero: no data,
+    // not "0 likes", so YouTube's own count is shown instead
+    let count = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+    if count("likes") == 0 && count("dislikes") == 0 && count("viewCount") == 0 {
+        anyhow::bail!("Return YouTube Dislike has no counts for this video yet");
+    }
     Ok(Votes {
         likes: v.get("likes").and_then(Value::as_u64).unwrap_or(0),
         dislikes: v.get("dislikes").and_then(Value::as_u64).unwrap_or(0),

@@ -1,6 +1,6 @@
 [package]
 name = "streamtube"
-version = "0.7.5-alpha"
+version = "1.0.0"
 edition = "2024"
 description = "A YouTube desktop client in Rust + GPUI with SponsorBlock, DeArrow, RYD, local subscriptions & more"
 license = "MIT"
@@ -23,6 +23,8 @@ libloading = "0.9"
 image = { version = "0.25", default-features = false }
 futures = "0.3"
 smallvec = "1"
+unicode-linebreak = "0.1"
+unicode-segmentation = "1"
 rand = "0.9"
 open = "5"
 raw-window-handle = "0.6"
@@ -41,6 +43,8 @@ objc2 = "0.6"
 windows = { version = "0.62", features = ["Foundation", "Media", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_WinRT", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# already in the tree through GPUI (ashpd); MPRIS for the desktop's media widget, see src/mpris.rs
+zbus = { version = "5", default-features = false, features = ["async-io"] }
 wayland-client = { version = "0.31", features = ["system", "dlopen"] }
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 
@@ -61,3 +65,7 @@ embed-resource = "3"
 # needs visual glyph ordering. See vendor/gpui-pre-windows/PATCHES.md.
 [patch.crates-io]
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+# xim-ctext 0.3 with a decoder that handles non-UTF-8 compound text such as
+# Cyrillic, which made typing in some Linux input methods crash the app (#248).
+# See vendor/xim-ctext/Cargo.toml.
+xim-ctext = { path = "vendor/xim-ctext" }

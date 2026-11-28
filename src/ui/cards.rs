@@ -148,7 +148,7 @@ pub fn thumbnail(
 ) -> Div {
     let p = pal(cx);
     let progress = watched_progress(&v.id, cx);
-    let radius = radius * (store::settings_snapshot().thumb_radius / 12.0);
+    let radius = radius * thumbnail_corner_scale();
     div()
         .relative()
         .w(w)
@@ -209,6 +209,10 @@ pub fn download_menu_items(video: &VideoItem, anchor: Point<Pixels>) -> Vec<Menu
 }
 
 pub fn video_menu_items(v: &VideoItem) -> Vec<MenuItem> {
+    video_menu_items_with(v, true)
+}
+
+fn video_menu_items_with(v: &VideoItem, save_to_watch_later: bool) -> Vec<MenuItem> {
     let mut items = Vec::new();
     {
         let route = if v.is_short {
@@ -232,38 +236,40 @@ pub fn video_menu_items(v: &VideoItem) -> Vec<MenuItem> {
         },
     ));
     let v2 = v.clone();
-    items.push(MenuItem::new(
-        "clock",
-        t("Save to Watch later"),
-        move |_, cx| {
-            let local = store::playlists()
-                .into_iter()
-                .find(|p| p.protected && p.name == "Watch later");
-            if let Some(wl) = &local {
-                store::playlist_add(wl.id, &v2);
-            }
-            if let Some(session) = crate::api::auth::session_identity() {
-                let id = v2.id.clone();
-                let saved_locally = local.is_some();
-                cx.spawn(async move |cx| {
-                    let result = blocking(move || {
-                        crate::api::auth::set_account_playlist_saved(&session, "WL", &id, true)
+    if save_to_watch_later {
+        items.push(MenuItem::new(
+            "clock",
+            t("Save to Watch later"),
+            move |_, cx| {
+                let local = store::playlists()
+                    .into_iter()
+                    .find(|p| p.protected && p.name == "Watch later");
+                if let Some(wl) = &local {
+                    store::playlist_add(wl.id, &v2);
+                }
+                if let Some(session) = crate::api::auth::session_identity() {
+                    let id = v2.id.clone();
+                    let saved_locally = local.is_some();
+                    cx.spawn(async move |cx| {
+                        let result = blocking(move || {
+                            crate::api::auth::set_account_playlist_saved(&session, "WL", &id, true)
+                        })
+                        .await;
+                        let _ = cx.update(|cx| match result {
+                            Ok(()) => toast(cx, t("Saved to Watch later")),
+                            Err(_) if saved_locally => {
+                                toast(cx, t("Saved locally. Couldn't save to YouTube Watch later"))
+                            }
+                            Err(_) => toast(cx, t("Couldn't save to that YouTube playlist")),
+                        });
                     })
-                    .await;
-                    let _ = cx.update(|cx| match result {
-                        Ok(()) => toast(cx, t("Saved to Watch later")),
-                        Err(_) if saved_locally => {
-                            toast(cx, t("Saved locally. Couldn't save to YouTube Watch later"))
-                        }
-                        Err(_) => toast(cx, t("Couldn't save to that YouTube playlist")),
-                    });
-                })
-                .detach();
-            } else if local.is_some() {
-                toast(cx, t("Saved to Watch later"));
-            }
-        },
-    ));
+                    .detach();
+                } else if local.is_some() {
+                    toast(cx, t("Saved to Watch later"));
+                }
+            },
+        ));
+    }
     let v3 = v.clone();
     items.push(MenuItem::new(
         "bookmark",
@@ -361,21 +367,41 @@ fn is_watched_in_history(id: &str) -> bool {
 }
 
 fn more_button(id: SharedString, v: &VideoItem, cx: &App) -> Stateful<Div> {
-    more_button_with(id, v, Vec::new(), cx)
+    more_button_with(id, v, MenuExtra::default(), cx)
 }
 
-/// The video's menu; `extra` items go in after "Save to playlist…".
-fn menu_with(v: &VideoItem, extra: &[MenuItem]) -> Vec<MenuItem> {
-    let mut items = video_menu_items(v);
-    let at = items.len().min(4);
-    items.splice(at..at, extra.iter().cloned());
+/// Extra items for a card's menu.
+#[derive(Clone, Default)]
+pub struct MenuExtra {
+    pub items: Vec<MenuItem>,
+    /// the card is in Watch later: the items take the place of "Save to Watch later"
+    pub replaces_watch_later: bool,
+}
+
+impl From<Vec<MenuItem>> for MenuExtra {
+    fn from(items: Vec<MenuItem>) -> Self {
+        Self {
+            items,
+            replaces_watch_later: false,
+        }
+    }
+}
+
+/// The video's menu; `extra` items go in after "Save to playlist…", or where
+/// "Save to Watch later" would be.
+fn menu_with(v: &VideoItem, extra: &MenuExtra) -> Vec<MenuItem> {
+    let mut items = video_menu_items_with(v, !extra.replaces_watch_later);
+    let at = items
+        .len()
+        .min(if extra.replaces_watch_later { 2 } else { 4 });
+    items.splice(at..at, extra.items.iter().cloned());
     items
 }
 
 /// A right click on a card opens the same menu as its three-dots button.
 fn right_click_menu(
     v: &VideoItem,
-    extra: Vec<MenuItem>,
+    extra: MenuExtra,
 ) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
     let v = v.clone();
     move |ev, window, cx| {
@@ -413,12 +439,7 @@ fn hover_backdrop(cx: &App) -> impl IntoElement {
 
 /// The three-dots button, shown while the pointer is over its card; `extra` items go
 /// into the menu after "Save to playlist…".
-fn more_button_with(
-    id: SharedString,
-    v: &VideoItem,
-    extra: Vec<MenuItem>,
-    cx: &App,
-) -> Stateful<Div> {
+fn more_button_with(id: SharedString, v: &VideoItem, extra: MenuExtra, cx: &App) -> Stateful<Div> {
     let p = pal(cx);
     let v = v.clone();
     div()
@@ -443,8 +464,9 @@ fn more_button_with(
 
 fn watch_route(v: &VideoItem) -> Route {
     match &v.playlist_id {
-        // a show's own list ("OL…") plays the latest episode with the episodes queued
-        Some(list) if list.starts_with("OL") => Route::Watch {
+        // a show's own list ("OL…") plays the latest episode with the episodes queued,
+        // a YouTube Mix ("RD…") the song with the radio queued after it
+        Some(list) if list.starts_with("OL") || list.starts_with("RD") => Route::Watch {
             id: v.id.clone(),
             playlist: Some(list.clone()),
             start: None,
@@ -471,6 +493,7 @@ fn video_title(id: impl Into<ElementId>, title: String) -> Stateful<Div> {
     let full_title = title.clone();
     div()
         .id("video-title")
+        .text_ellipsis()
         .line_clamp(2)
         .when(left_to_right, |d| d.text_left())
         .tooltip(move |window, cx| {
@@ -527,7 +550,10 @@ pub fn video_card(v: &VideoItem, width: Pixels, show_channel: bool, cx: &mut App
         .cursor_pointer()
         .group("card")
         .on_aux_click(middle_click_tab(route.clone()))
-        .on_mouse_down(MouseButton::Right, right_click_menu(v, Vec::new()))
+        .on_mouse_down(
+            MouseButton::Right,
+            right_click_menu(v, MenuExtra::default()),
+        )
         .on_click(move |_, window, cx| {
             if has_text_selection(window, cx) {
                 return;
@@ -631,7 +657,10 @@ pub fn shorts_card(v: &VideoItem, width: Pixels, cx: &mut App) -> AnyElement {
         .cursor_pointer()
         .group("card")
         .on_aux_click(middle_click_tab(route.clone()))
-        .on_mouse_down(MouseButton::Right, right_click_menu(v, Vec::new()))
+        .on_mouse_down(
+            MouseButton::Right,
+            right_click_menu(v, MenuExtra::default()),
+        )
         .on_click(move |_, window, cx| {
             if has_text_selection(window, cx) {
                 return;
@@ -690,7 +719,10 @@ pub fn video_row(v: &VideoItem, thumb_w: Pixels, cx: &mut App) -> AnyElement {
         .cursor_pointer()
         .group("card")
         .on_aux_click(middle_click_tab(route.clone()))
-        .on_mouse_down(MouseButton::Right, right_click_menu(v, Vec::new()))
+        .on_mouse_down(
+            MouseButton::Right,
+            right_click_menu(v, MenuExtra::default()),
+        )
         .on_click(move |_, window, cx| {
             if has_text_selection(window, cx) {
                 return;
@@ -764,35 +796,43 @@ pub fn video_row(v: &VideoItem, thumb_w: Pixels, cx: &mut App) -> AnyElement {
                     )
                 })
                 .when_some(v.description_snippet.clone(), |d, s| {
-                    d.child(div().text_xs().text_color(p.text2).line_clamp(2).child(
-                        gpui_kit::base::SelectableText::new(
-                            SharedString::from(format!("vrd-{}", v.id)),
-                            s,
-                        ),
-                    ))
+                    d.child(
+                        div()
+                            .text_xs()
+                            .text_color(p.text2)
+                            .text_ellipsis()
+                            .line_clamp(2)
+                            .child(gpui_kit::base::SelectableText::new(
+                                SharedString::from(format!("vrd-{}", v.id)),
+                                s,
+                            )),
+                    )
                 }),
         )
         .into_any_element()
 }
 
-/// Compact row used for related videos / queues.
-pub fn compact_row(
-    v: &VideoItem,
-    active: bool,
-    on_click: Option<Arc<dyn Fn(&mut Window, &mut App)>>,
-    cx: &mut App,
-) -> AnyElement {
-    compact_row_with(v, active, on_click, Vec::new(), cx)
-}
-
-/// `compact_row` with extra items in the video's menu.
+/// Compact playlist or queue row with its own menu actions.
 pub fn compact_row_with(
     v: &VideoItem,
     active: bool,
     on_click: Option<Arc<dyn Fn(&mut Window, &mut App)>>,
-    extra: Vec<MenuItem>,
+    extra: impl Into<MenuExtra>,
     cx: &mut App,
 ) -> AnyElement {
+    compact_row(v, size(px(168.), px(94.)), active, on_click, extra, cx)
+}
+
+/// A compact row with its thumbnail at `thumb_size`; `extra` items go into the video's menu.
+pub fn compact_row(
+    v: &VideoItem,
+    thumb_size: Size<Pixels>,
+    active: bool,
+    on_click: Option<Arc<dyn Fn(&mut Window, &mut App)>>,
+    extra: impl Into<MenuExtra>,
+    cx: &mut App,
+) -> AnyElement {
+    let extra = extra.into();
     let p = pal(cx);
     let (title, thumb) = branded(v, cx);
     let thumb = if thumb == v.thumbnail {
@@ -824,7 +864,14 @@ pub fn compact_row_with(
                 None => navigate(route.clone(), window, cx),
             }
         })
-        .child(thumbnail(v, thumb, px(168.), px(94.), px(8.), cx))
+        .child(thumbnail(
+            v,
+            thumb,
+            thumb_size.width,
+            thumb_size.height,
+            px(8.),
+            cx,
+        ))
         .child(
             div()
                 .flex()
@@ -838,12 +885,30 @@ pub fn compact_row_with(
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(p.text),
                 )
-                .child(div().text_xs().text_color(p.text2).truncate().child(
-                    gpui_kit::base::SelectableText::new(
-                        SharedString::from(format!("crn-{}", v.id)),
-                        v.channel_name.clone(),
-                    ),
-                ))
+                .child({
+                    // the channel name opens the channel, like on youtube.com; the rest of the row opens the video
+                    let cid = v.channel_id.clone();
+                    div()
+                        .id(SharedString::from(format!("crc-{}", v.id)))
+                        .text_xs()
+                        .text_color(p.text2)
+                        .truncate()
+                        .when(cid.is_some(), |d| {
+                            d.cursor_pointer().hover(move |s| s.text_color(p.text))
+                        })
+                        .on_click(move |_, window, cx| {
+                            let Some(id) = cid.clone() else { return };
+                            cx.stop_propagation();
+                            if has_text_selection(window, cx) {
+                                return;
+                            }
+                            navigate(Route::Channel(id), window, cx);
+                        })
+                        .child(gpui_kit::base::SelectableText::new(
+                            SharedString::from(format!("crn-{}", v.id)),
+                            v.channel_name.clone(),
+                        ))
+                })
                 .child(video_metadata(
                     v,
                     div().text_xs().text_color(p.text2).truncate(),
@@ -932,12 +997,17 @@ pub fn channel_row(c: &ChannelItem, thumb_w: Pixels, cx: &mut App) -> AnyElement
                         ))
                 })
                 .when_some(c.description.clone(), |d, s| {
-                    d.child(div().text_xs().text_color(p.text2).line_clamp(2).child(
-                        gpui_kit::base::SelectableText::new(
-                            SharedString::from(format!("chr-d-{}", c.id)),
-                            s,
-                        ),
-                    ))
+                    d.child(
+                        div()
+                            .text_xs()
+                            .text_color(p.text2)
+                            .text_ellipsis()
+                            .line_clamp(2)
+                            .child(gpui_kit::base::SelectableText::new(
+                                SharedString::from(format!("chr-d-{}", c.id)),
+                                s,
+                            )),
+                    )
                 }),
         )
         .child(subscribe_button(
@@ -1042,6 +1112,7 @@ pub fn channel_card(c: &ChannelItem, width: Pixels, cx: &mut App) -> AnyElement 
                 .text_base()
                 .text_color(p.text)
                 .text_center()
+                .text_ellipsis()
                 .line_clamp(1)
                 .child(gpui_kit::base::SelectableText::new(
                     SharedString::from(format!("ccn-{}", c.id)),
@@ -1098,6 +1169,7 @@ pub fn playlist_card(pl: &PlaylistItem, width: Pixels, cx: &mut App) -> AnyEleme
                         .text_base()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(p.text)
+                        .text_ellipsis()
                         .line_clamp(2)
                         .child(gpui_kit::base::SelectableText::new(
                             SharedString::from(format!("pct-{}", pl.id)),
@@ -1125,6 +1197,8 @@ pub fn playlist_thumb(
     cx: &App,
 ) -> Div {
     let p = pal(cx);
+    let scale = thumbnail_corner_scale();
+    let radius = rems(0.75 * scale);
     div()
         .relative()
         .w(w)
@@ -1137,21 +1211,21 @@ pub fn playlist_thumb(
                 .left(px(12.))
                 .right(px(12.))
                 .h_4()
-                .rounded_t_lg()
+                .rounded_t(rems(0.5 * scale))
                 .bg(p.hover),
         )
         .child(
             div()
                 .relative()
                 .size_full()
-                .rounded_xl()
+                .rounded(radius)
                 .overflow_hidden()
                 .bg(p.surface)
                 .when_some(thumb, |d, t| {
                     d.child(
                         img(SharedString::from(t))
                             .size_full()
-                            .rounded_xl()
+                            .rounded(radius)
                             .object_fit(ObjectFit::Cover),
                     )
                 })
@@ -1210,12 +1284,17 @@ pub fn playlist_row(pl: &PlaylistItem, thumb_w: Pixels, cx: &mut App) -> AnyElem
                 .gap_1()
                 .flex_1()
                 .min_w_0()
-                .child(div().text_lg().text_color(p.text).line_clamp(2).child(
-                    gpui_kit::base::SelectableText::new(
-                        SharedString::from(format!("prt-{}", pl.id)),
-                        pl.title.clone(),
-                    ),
-                ))
+                .child(
+                    div()
+                        .text_lg()
+                        .text_color(p.text)
+                        .text_ellipsis()
+                        .line_clamp(2)
+                        .child(gpui_kit::base::SelectableText::new(
+                            SharedString::from(format!("prt-{}", pl.id)),
+                            pl.title.clone(),
+                        )),
+                )
                 .when_some(pl.channel_name.clone(), |d, c| {
                     d.child(div().text_xs().text_color(p.text2).child(c))
                 })

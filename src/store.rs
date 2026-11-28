@@ -10,6 +10,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
+pub const DEFAULT_UP_NEXT_THUMBNAIL_WIDTH: u32 = 168;
+pub const UP_NEXT_THUMBNAIL_SIZES: &[(u32, &str)] = &[
+    (128, "Small"),
+    (DEFAULT_UP_NEXT_THUMBNAIL_WIDTH, "Medium"),
+    (208, "Large"),
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -20,6 +27,7 @@ pub struct Settings {
     pub start_page: String,
     pub minimize_to_tray: bool,
     pub grid_columns: u32,
+    pub up_next_thumbnail_width: u32,
     // Region
     pub region: String,
     pub language: String,
@@ -32,6 +40,7 @@ pub struct Settings {
     pub proxy: String,
     // Player
     pub theater_mode: bool,
+    pub theater_full_height: bool,
     pub pip_always_on_top: bool,
     pub default_quality: u32,
     pub codec_pref: String,
@@ -88,6 +97,8 @@ pub struct Settings {
     /// The user picked (or accepted) the download folder; until then the first download asks.
     pub download_dir_chosen: bool,
     pub download_format: String,
+    /// File name for downloads, with {title}, {channel} and {id}; empty is "{title} [{id}]"
+    pub download_name: String,
     pub external_player: String,
     // appearance / player customization
     pub ui_scale: f32,
@@ -171,6 +182,7 @@ impl Default for Settings {
             start_page: "home".into(),
             minimize_to_tray: false,
             grid_columns: 0,
+            up_next_thumbnail_width: DEFAULT_UP_NEXT_THUMBNAIL_WIDTH,
             region: "US".into(),
             language: "en".into(),
             original_video_titles: false,
@@ -179,6 +191,7 @@ impl Default for Settings {
             ytdlp_path: String::new(),
             proxy: String::new(),
             theater_mode: false,
+            theater_full_height: false,
             pip_always_on_top: false,
             default_quality: 1080,
             codec_pref: "vp9".into(),
@@ -234,6 +247,7 @@ impl Default for Settings {
                 .unwrap_or_default(),
             download_dir_chosen: false,
             download_format: "1080".into(),
+            download_name: String::new(),
             external_player: String::new(),
             ui_scale: 1.0,
             density: "default".into(),
@@ -350,6 +364,12 @@ fn write_settings_file(s: &Settings) -> Result<()> {
 }
 
 fn normalize_settings(s: &mut Settings) {
+    if !UP_NEXT_THUMBNAIL_SIZES
+        .iter()
+        .any(|&(width, _)| width == s.up_next_thumbnail_width)
+    {
+        s.up_next_thumbnail_width = DEFAULT_UP_NEXT_THUMBNAIL_WIDTH;
+    }
     const LADDER: [u32; 7] = [144, 240, 360, 480, 720, 1080, 1440];
     if s.default_quality != 2160
         && s.default_quality != 4320
@@ -494,33 +514,74 @@ const TABLES: &str = "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value
 /// every row that can still be read, and the damaged file is kept beside it.
 fn open_checked(path: &std::path::Path) -> Connection {
     let conn = Connection::open(path).expect("open db");
-    let ok = conn
-        .query_row("PRAGMA quick_check(1)", [], |r| r.get::<_, String>(0))
-        .map(|r| r == "ok")
-        .unwrap_or(false);
-    if ok {
+    if !check_says_damaged(conn.query_row("PRAGMA quick_check(1)", [], |r| r.get::<_, String>(0))) {
+        return conn;
+    }
+    // Another copy of the app has the database open: moving the file away under it
+    // would split its writes from ours. Repair at the next start instead.
+    if crate::links::other_instance_running() {
+        eprintln!(
+            "streamtube: the database failed its check; it is repaired when no other copy is running"
+        );
         return conn;
     }
     eprintln!("streamtube: the database failed its check, rebuilding it");
     let fresh = path.with_extension("db.rebuild");
     let _ = std::fs::remove_file(&fresh);
-    if rebuild_into(&conn, &fresh).is_err() {
+    if let Err(e) = rebuild_into(&conn, &fresh) {
+        eprintln!("streamtube: couldn't rebuild the database: {e}");
         let _ = std::fs::remove_file(&fresh);
         return conn;
     }
     drop(conn);
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let damaged = path.with_extension(format!("db.damaged-{stamp}"));
+    let side =
+        |base: &std::path::Path, ext: &str| PathBuf::from(format!("{}{ext}", base.display()));
+    let reopen = |why: &str| {
+        eprintln!("streamtube: {why}; keeping the database as it is");
+        Connection::open(path).expect("open db")
+    };
     if std::fs::rename(path, &damaged).is_err() {
         let _ = std::fs::remove_file(&fresh);
-        return Connection::open(path).expect("open db");
+        return reopen("couldn't move the damaged database aside");
     }
+    // A -wal left in place would be replayed onto the rebuilt database and damage it.
     for ext in ["-wal", "-shm"] {
-        let from = PathBuf::from(format!("{}{ext}", path.display()));
-        let _ = std::fs::rename(&from, PathBuf::from(format!("{}{ext}", damaged.display())));
+        let from = side(path, ext);
+        if from.exists() && std::fs::rename(&from, side(&damaged, ext)).is_err() {
+            for back in ["-wal", "-shm"] {
+                let _ = std::fs::rename(side(&damaged, back), side(path, back));
+            }
+            let _ = std::fs::rename(&damaged, path);
+            let _ = std::fs::remove_file(&fresh);
+            return reopen("couldn't move the damaged database's journal aside");
+        }
     }
-    let _ = std::fs::rename(&fresh, path);
+    if std::fs::rename(&fresh, path).is_err() {
+        for ext in ["-wal", "-shm"] {
+            let _ = std::fs::rename(side(&damaged, ext), side(path, ext));
+        }
+        let _ = std::fs::rename(&damaged, path);
+        let _ = std::fs::remove_file(&fresh);
+        return reopen("couldn't put the rebuilt database in place");
+    }
     Connection::open(path).expect("open db")
+}
+
+/// Whether the result of `PRAGMA quick_check` means the file is damaged. A check
+/// that couldn't run (the database is busy or locked by another copy) says nothing.
+fn check_says_damaged(result: rusqlite::Result<String>) -> bool {
+    match result {
+        Ok(r) => r != "ok",
+        Err(rusqlite::Error::SqliteFailure(e, _)) => {
+            matches!(
+                e.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            )
+        }
+        Err(_) => false,
+    }
 }
 
 fn rebuild_into(old: &Connection, fresh: &std::path::Path) -> Result<()> {
@@ -1624,16 +1685,20 @@ mod settings_tests {
     use super::*;
 
     #[test]
-    fn theater_mode_round_trips_and_defaults_to_off() {
+    fn theater_settings_round_trip_and_default_to_off() {
         let old = settings_from_value(serde_json::json!({}));
         assert!(!old.theater_mode);
+        assert!(!old.theater_full_height);
 
         let enabled = Settings {
             theater_mode: true,
+            theater_full_height: true,
             ..old
         };
         let saved = serde_json::to_value(enabled).unwrap();
-        assert!(settings_from_value(saved).theater_mode);
+        let restored = settings_from_value(saved);
+        assert!(restored.theater_mode);
+        assert!(restored.theater_full_height);
     }
 
     #[test]
@@ -1697,6 +1762,90 @@ mod settings_tests {
             .filter_map(Result::ok)
             .any(|e| e.file_name().to_string_lossy().contains("damaged"));
         assert!(damaged, "the damaged file is kept");
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_check_that_could_not_run_is_not_damage() {
+        let fail = |code| {
+            Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                None,
+            ))
+        };
+        assert!(!check_says_damaged(Ok("ok".into())));
+        assert!(check_says_damaged(Ok("*** in database main ***".into())));
+        assert!(check_says_damaged(fail(rusqlite::ffi::SQLITE_CORRUPT)));
+        assert!(check_says_damaged(fail(rusqlite::ffi::SQLITE_NOTADB)));
+        assert!(!check_says_damaged(fail(rusqlite::ffi::SQLITE_BUSY)));
+        assert!(!check_says_damaged(fail(rusqlite::ffi::SQLITE_LOCKED)));
+    }
+
+    /// A damaged database left with its -wal (the app was closed mid-session): the
+    /// rebuilt file must not get the old journal replayed onto it.
+    #[test]
+    fn damaged_database_with_its_journal_is_rebuilt() {
+        let dir = std::env::temp_dir().join(format!("st-rebuild-wal-{}", std::process::id()));
+        let live = dir.join("live");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&live).unwrap();
+        let path = dir.join("streamtube.db");
+        {
+            let c = Connection::open(live.join("streamtube.db")).unwrap();
+            c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+                .unwrap();
+            c.execute_batch(TABLES).unwrap();
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+            for i in 0..300 {
+                c.execute(
+                    "INSERT INTO kv VALUES (?1, ?2)",
+                    params![format!("k{i}"), "x".repeat(200)],
+                )
+                .unwrap();
+            }
+            c.execute_batch("PRAGMA wal_checkpoint(PASSIVE)").unwrap();
+            for i in 0..50 {
+                c.execute(
+                    "INSERT INTO history(video_id, json, watched_at) VALUES (?1, '{}', ?2)",
+                    params![format!("v{i}"), i],
+                )
+                .unwrap();
+            }
+            // copy the files as they are on disk while the connection still has them open
+            for ext in ["", "-wal"] {
+                std::fs::copy(
+                    live.join(format!("streamtube.db{ext}")),
+                    dir.join(format!("streamtube.db{ext}")),
+                )
+                .unwrap();
+            }
+        }
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            let mut f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            f.seek(SeekFrom::Start(4096 * 6)).unwrap();
+            f.write_all(&[0xAB; 64]).unwrap();
+        }
+        assert!(dir.join("streamtube.db-wal").exists());
+        let c = open_checked(&path);
+        let ok: String = c
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ok, "ok");
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 50, "rows that were only in the journal are kept");
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.contains("damaged")),
+            "the damaged file is kept: {names:?}"
+        );
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
     }

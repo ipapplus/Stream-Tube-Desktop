@@ -102,6 +102,12 @@ impl SettingsPage {
                 "Download folder",
                 |s, v| s.download_dir = v,
             ),
+            (
+                "download_name",
+                s.download_name.clone(),
+                "{title} [{id}]",
+                |s, v| s.download_name = v,
+            ),
             ("captions_lang", s.captions_lang.clone(), "en", |s, v| {
                 s.captions_lang = v
             }),
@@ -333,13 +339,24 @@ fn settings_search_text(text: &str) -> String {
     text.replace(['İ', 'ı'], "i").to_lowercase()
 }
 
+thread_local! {
+    /// rows that matched the settings search in the section being drawn
+    static HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn matches_settings_search(labels: &[&str]) -> bool {
     QUERY.with(|query| {
         let query = query.borrow();
-        query.is_empty()
-            || labels
-                .iter()
-                .any(|label| settings_search_text(label).contains(query.as_str()))
+        if query.is_empty() {
+            return true;
+        }
+        let hit = labels
+            .iter()
+            .any(|label| settings_search_text(label).contains(query.as_str()));
+        if hit {
+            HITS.with(|h| h.set(h.get() + 1));
+        }
+        hit
     })
 }
 
@@ -1053,6 +1070,7 @@ impl SettingsPage {
             )))
             .child(row("Density", "", self.choice("density", &[("compact".to_string(), "Compact"), ("default".to_string(), "Default"), ("comfortable".to_string(), "Comfortable")], s.density.clone(), |s, v| s.density = v, cx), cx))
             .child(row("Thumbnail corners", "", self.choice("radius", &[(0.0f32, "Square"), (6.0, "Small"), (12.0, "Rounded"), (18.0, "Large")], s.thumb_radius, |s, v| s.thumb_radius = v, cx), cx))
+            .child(row("Up next thumbnail size", "", self.choice("up-next-thumbnail-size", store::UP_NEXT_THUMBNAIL_SIZES, s.up_next_thumbnail_width, |s, v| s.up_next_thumbnail_width = v, cx), cx))
             .child(row("Grid columns", "", self.choice("cols", &[(0u32, "Auto"), (3, "3"), (4, "4"), (5, "5"), (6, "6")], s.grid_columns, |s, v| s.grid_columns = v, cx), cx))
             .child(row("Play videos on hover", "Muted preview when the pointer rests on a thumbnail", switch("hovp", s.hover_preview, |s, v| s.hover_preview = v, cx), cx))
             .child(row("Region", "Trending, Explore and search results", self.dropdown("dd-region", crate::locale::REGIONS, s.region.clone(), |s, v| s.region = v, cx), cx))
@@ -1069,6 +1087,12 @@ impl SettingsPage {
         let s = store::settings_snapshot();
         card(cx)
             .child(row("Theater mode", "Use the wider player layout when opening a video", switch("theater-mode", s.theater_mode, |s, v| s.theater_mode = v, cx), cx))
+            .child(row(
+                "Full-height theater mode",
+                "Fit the video in the space below the top bar and tabs.",
+                switch("theater-full-height", s.theater_full_height, |s, v| s.theater_full_height = v, cx),
+                cx,
+            ))
             .child(row(
                 "Picture-in-picture above other apps",
                 "",
@@ -1795,6 +1819,7 @@ impl SettingsPage {
         let s = store::settings_snapshot();
         card(cx)
             .child(row("Download folder", "", text_field(&self.input("download_dir"), 360., cx), cx))
+            .child(row("File name", "Use {title}, {channel} and {id}. Leave empty for the default", text_field(&self.input("download_name"), 360., cx), cx))
             .child(row(
                 "Default format",
                 "",
@@ -2113,16 +2138,31 @@ impl Render for SettingsPage {
         if !query.is_empty() {
             // search: matching rows from every section
             let mut all = div().flex().flex_col().gap_4();
+            let mut any = false;
             for (sec, name, _) in SECTIONS {
-                all = all
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(p.text2)
-                            .child(t(name).to_uppercase()),
-                    )
-                    .child(render_section(self, *sec, cx));
+                // only the sections with a matching row (an empty card read as a broken page)
+                HITS.with(|h| h.set(0));
+                let section = render_section(self, *sec, cx);
+                if HITS.with(|h| h.get()) > 0 {
+                    any = true;
+                    all = all
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(p.text2)
+                                .child(t(name).to_uppercase()),
+                        )
+                        .child(section);
+                }
+            }
+            if !any {
+                all = all.child(
+                    div()
+                        .text_sm()
+                        .text_color(p.text2)
+                        .child(t("No settings match your search")),
+                );
             }
             QUERY.with(|q| q.borrow_mut().clear());
             return page_scroll("settings-scroll", &self.scroll).child(

@@ -115,6 +115,21 @@ impl Runtime {
     }
 }
 
+/// yt-dlp only enables Deno by itself, and without a JavaScript runtime the
+/// signed-in requests come back with no formats (#260): point it at the
+/// runtime the app found.
+pub fn ytdlp_runtime_args() -> Vec<std::ffi::OsString> {
+    let r = runtime();
+    let name = match r.kind {
+        Kind::Deno => "deno",
+        Kind::Node => "node",
+        Kind::Embedded => return Vec::new(),
+    };
+    let mut spec = std::ffi::OsString::from(format!("{name}:"));
+    spec.push(&r.path);
+    vec!["--js-runtimes".into(), spec]
+}
+
 static RUNTIME: Mutex<Option<(Option<Runtime>, Instant)>> = Mutex::new(None);
 
 /// The JavaScript runtime to solve with: Deno or Node.js from this machine when

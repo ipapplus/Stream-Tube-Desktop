@@ -45,9 +45,7 @@ pub fn slot_canvas(slot: Rc<Cell<Option<Bounds<Pixels>>>>) -> impl IntoElement {
 
 pub struct SlotFollower {
     slot: Rc<Cell<Option<Bounds<Pixels>>>>,
-    child: Option<AnyElement>,
-    laid_size: Option<Size<Pixels>>,
-    can_paint: bool,
+    child: AnyElement,
     clip: Option<Rc<Cell<Option<Bounds<Pixels>>>>>,
 }
 
@@ -58,19 +56,10 @@ impl SlotFollower {
 
     /// Follows any slot (e.g. the thumbnail being previewed).
     pub fn with_slot(slot: Rc<Cell<Option<Bounds<Pixels>>>>, content: impl IntoElement) -> Self {
-        let laid_size = slot.get().map(|b| b.size);
-        let child = laid_size.map(|s| {
-            div()
-                .w(s.width)
-                .h(s.height)
-                .child(content)
-                .into_any_element()
-        });
+        let child = div().size_full().child(content).into_any_element();
         Self {
             slot,
             child,
-            laid_size,
-            can_paint: false,
             clip: None,
         }
     }
@@ -98,7 +87,7 @@ impl IntoElement for SlotFollower {
 
 impl Element for SlotFollower {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    type PrepaintState = bool;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -119,51 +108,34 @@ impl Element for SlotFollower {
         style.position = Position::Absolute;
         style.inset.top = px(0.).into();
         style.inset.left = px(0.).into();
-        let children: Vec<LayoutId> = self
-            .child
-            .as_mut()
-            .map(|c| c.request_layout(window, cx))
-            .into_iter()
-            .collect();
-        (window.request_layout(style, children, cx), ())
+        (window.request_layout(style, [], cx), ())
     }
 
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
-    ) {
-        self.can_paint = false;
+    ) -> bool {
         let Some(slot) = self.slot.get() else {
             window.request_animation_frame();
-            return;
+            return false;
         };
-        if Some(slot.size) != self.laid_size {
-            // slot changed size since layout: draw once more with the new size
-            window.request_animation_frame();
-            // skip painting if orientation flipped (e.g. 16:9 Watch -> 9:16 Shorts)
-            if let Some(ls) = self.laid_size {
-                let old_land = f32::from(ls.width) > f32::from(ls.height);
-                let new_land = f32::from(slot.size.width) > f32::from(slot.size.height);
-                if old_land != new_land {
-                    return;
-                }
-            } else {
-                return;
-            }
-        }
+        // The page records the slot during prepaint, so lay out the player
+        // against that size in the same frame.
         let mask = self.mask();
-        if let Some(child) = self.child.as_mut() {
-            let offset = slot.origin - bounds.origin;
-            window.with_content_mask(mask, |window| {
-                window.with_element_offset(offset, |window| child.prepaint(window, cx))
-            });
-            self.can_paint = true;
-        }
+        window.with_content_mask(mask, |window| {
+            self.child.prepaint_as_root(
+                slot.origin,
+                slot.size.map(AvailableSpace::Definite),
+                window,
+                cx,
+            );
+        });
+        true
     }
 
     fn paint(
@@ -172,15 +144,13 @@ impl Element for SlotFollower {
         _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _: &mut (),
-        _: &mut (),
+        ready: &mut bool,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mask = self.mask();
-        if self.can_paint {
-            if let Some(child) = self.child.as_mut() {
-                window.with_content_mask(mask, |window| child.paint(window, cx));
-            }
+        if *ready {
+            let mask = self.mask();
+            window.with_content_mask(mask, |window| self.child.paint(window, cx));
         }
     }
 }

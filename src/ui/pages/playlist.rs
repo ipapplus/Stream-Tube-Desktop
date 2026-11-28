@@ -480,6 +480,7 @@ impl Render for PlaylistPage {
         }
         let videos = self.videos.ready().cloned().unwrap_or_default();
         let thumb = videos.first().map(|v| v.thumbnail.clone());
+        let radius = rems(0.75 * thumbnail_corner_scale());
         let local_id = if let Source::Local(id) = self.source {
             Some(id)
         } else {
@@ -512,14 +513,14 @@ impl Render for PlaylistPage {
                     div()
                         .w_full()
                         .h(px(176.))
-                        .rounded_xl()
+                        .rounded(radius)
                         .overflow_hidden()
                         .bg(p.surface)
                         .when_some(thumb, |d, t| {
                             d.child(
                                 img(SharedString::from(t))
                                     .size_full()
-                                    .rounded_xl()
+                                    .rounded(radius)
                                     .object_fit(ObjectFit::Cover),
                             )
                         }),
@@ -795,20 +796,32 @@ impl Render for PlaylistPage {
                 }
                 let vs = &shown;
                 // a list of the user's own: local, or an account playlist the account can edit
-                let editable = local_id.is_some() || self.authed;
+                // (its Favorites can be public, so it may not have been loaded through the account)
+                let account_favorites = matches!(&self.source, Source::Remote(id) if crate::ui::app::account_favorites_id(cx).as_ref() == Some(id));
+                let editable = local_id.is_some() || self.authed || account_favorites;
+                // saving to the list being shown makes no sense, so removing takes its place
+                let in_watch_later = self.is_watch_later();
                 for (i, v) in vs.iter().map(|(i, v)| (*i, v)) {
                     let extra = if editable {
                         let (page, rid) = (cx.entity().downgrade(), v.id.clone());
-                        vec![crate::ui::app::MenuItem::new(
-                            "list-x",
-                            t("Remove from playlist"),
-                            move |_, cx| {
-                                let _ =
-                                    page.update(cx, |this, cx| this.remove_video(rid.clone(), cx));
-                            },
-                        )]
+                        let label = if in_watch_later {
+                            "Remove from Watch later"
+                        } else {
+                            "Remove from playlist"
+                        };
+                        MenuExtra {
+                            items: vec![crate::ui::app::MenuItem::new(
+                                "list-x",
+                                t(label),
+                                move |_, cx| {
+                                    let _ = page
+                                        .update(cx, |this, cx| this.remove_video(rid.clone(), cx));
+                                },
+                            )],
+                            replaces_watch_later: in_watch_later,
+                        }
                     } else {
-                        Vec::new()
+                        MenuExtra::default()
                     };
                     let row = div()
                         .flex()

@@ -599,6 +599,29 @@ pub fn subscriptions_feed() -> Result<Page> {
     Ok(videos(collect_items(&r)))
 }
 
+/// The account's music picks: the Music tab of YouTube's TV app, which is
+/// personal when signed in. Each video opens as its YouTube Mix (radio), so it
+/// plays on into similar songs.
+pub fn music() -> Result<Page> {
+    let r = tv_call("browse", json!({ "browseId": "FEtopics_music" }))?;
+    Ok(as_mixes(videos(collect_items(&r))))
+}
+
+pub fn music_continue(token: &str) -> Result<Page> {
+    let r = tv_call("browse", json!({ "continuation": token }))?;
+    Ok(as_mixes(videos(collect_items(&r))))
+}
+
+/// Opens each video with its YouTube Mix ("RD" + video id) queued after it.
+fn as_mixes(mut page: Page) -> Page {
+    for item in &mut page.items {
+        if let Item::Video(v) = item {
+            v.playlist_id = Some(format!("RD{}", v.id));
+        }
+    }
+    page
+}
+
 pub fn browse_continue(token: &str) -> Result<Page> {
     let r = tv_call("browse", json!({ "continuation": token }))?;
     Ok(videos(collect_items(&r)))

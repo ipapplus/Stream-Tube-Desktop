@@ -81,7 +81,7 @@ const COLLAPSED_SIDEBAR_WIDTH: f32 = 88.0;
 pub struct AppHandle(pub WeakEntity<AppView>);
 impl Global for AppHandle {}
 
-fn shortcut_key(key: &str) -> &str {
+pub(crate) fn shortcut_key(key: &str) -> &str {
     // Match the US key positions when the platform reports Russian characters.
     match key {
         "ф" | "Ф" => "a",
@@ -360,6 +360,31 @@ pub fn play_next(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// The previous queue item, else the video watched before this one, else the
+/// start of this one.
+pub fn play_previous(window: &mut Window, cx: &mut App) {
+    let p = player(cx);
+    if let Some(i) = p.read(cx).queue_pos.filter(|i| *i > 0) {
+        p.update(cx, |p, cx| p.play_queue_index(i - 1, cx));
+        return;
+    }
+    match p.update(cx, |p, _| p.take_played_before()) {
+        Some(v) => navigate(
+            Route::Watch {
+                id: v.id,
+                playlist: None,
+                start: None,
+            },
+            window,
+            cx,
+        ),
+        None => p.update(cx, |p, cx| {
+            p.seek_to(0.0);
+            cx.notify();
+        }),
+    }
+}
+
 // ───────────────────────── menus & dialogs ─────────────────────────
 
 #[derive(Clone)]
@@ -517,6 +542,16 @@ pub fn sign_out(cx: &mut App) {
 
 pub fn open_save_dialog(v: VideoItem, window: &mut Window, cx: &mut App) {
     open_dialog(Dialog::SaveToPlaylist(v), window, cx);
+}
+
+/// The signed-in account's Favorites playlist id, once its playlists have loaded.
+pub fn account_favorites_id(cx: &App) -> Option<String> {
+    let app = cx.try_global::<AppHandle>()?.0.upgrade()?;
+    app.read(cx)
+        .yt_playlists
+        .as_deref()
+        .and_then(account_favorites)
+        .map(|p| p.id.clone())
 }
 
 fn account_favorites(playlists: &[PlaylistItem]) -> Option<&PlaylistItem> {
@@ -837,7 +872,14 @@ impl Render for Shell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::display::mark_drawn();
         let a = self.app.read(cx);
-        let has_slot = matches!(a.route, Route::Watch { .. } | Route::Shorts(_));
+        let music = super::music::state(cx);
+        // music mode's "Now playing" shows the cover art unless the video is asked
+        // for (fullscreen always shows the video)
+        let has_slot = match a.route {
+            Route::Watch { .. } => !music.on || music.video || cx.global::<UiState>().fullscreen,
+            Route::Shorts(_) => true,
+            _ => false,
+        };
         let clip = cx.global::<crate::ui::slot::PageClip>().0.clone();
         let main =
             has_slot.then(|| crate::ui::pip::main_surface(&a.main_view, cx).clip(clip.clone()));
@@ -855,7 +897,8 @@ impl Render for Shell {
                 .clip(clip.clone())
         });
         // the same conditions as `AppView::render_mini_player` (fullscreen is a watch page)
-        let mini = (!has_slot && player(cx).read(cx).video.is_some()).then(|| {
+        // in music mode the bar along the bottom takes the mini player's place
+        let mini = (!has_slot && !music.on && player(cx).read(cx).video.is_some()).then(|| {
             let slot = cx.global::<crate::ui::slot::MiniSlot>().0.clone();
             crate::ui::slot::SlotFollower::with_slot(slot, a.mini_view.clone())
         });
@@ -890,6 +933,8 @@ pub struct AppView {
     suggestion_serial: u64,
     sel_suggestion: Option<usize>,
     mini_view: Entity<PlayerView>,
+    /// The player bar in music mode
+    music_bar: Entity<super::music::MusicBar>,
     /// Mini player placement: distance from the window's right and bottom edges, and width
     mini_geom: (f32, f32, f32),
     mini_drag: Option<MiniDrag>,
@@ -911,6 +956,9 @@ pub struct AppView {
     yt_playlists: Option<Vec<PlaylistItem>>,
     yt_playlist_session: Option<std::sync::Arc<()>>,
     favorite_membership: Option<FavoriteMembership>,
+    /// account playlists a video was saved to or removed from in the Save dialog,
+    /// by (playlist, video): (saved, request pending)
+    yt_saved: std::collections::HashMap<(String, String), (bool, bool)>,
     dialog_input: Entity<InputState>,
     focus: FocusHandle,
     pending_watch_sync: Option<String>,
@@ -1086,6 +1134,9 @@ impl AppView {
             true
         });
         let mini_view = cx.new(|cx| PlayerView::new(p.clone(), true, cx));
+        super::music::init(cx);
+        let music_bar = cx.new(super::music::MusicBar::new);
+        subs.push(cx.observe_global::<super::music::MusicMode>(|_, cx| cx.notify()));
         let main_view = cx.new(|cx| PlayerView::new(p.clone(), false, cx));
         let preview_view = cx.new(crate::player::preview::PreviewView::new);
         let images = crate::ui::image_cache::init(cx);
@@ -1191,6 +1242,7 @@ impl AppView {
             suggestion_serial: 0,
             sel_suggestion: None,
             mini_view,
+            music_bar,
             mini_geom: load_mini_geom(),
             mini_drag: None,
             mini_dragged: false,
@@ -1205,6 +1257,7 @@ impl AppView {
             yt_playlists: None,
             yt_playlist_session: None,
             favorite_membership: None,
+            yt_saved: Default::default(),
             dialog_input,
             focus,
             pending_watch_sync: None,
@@ -1517,6 +1570,12 @@ impl AppView {
                                 .text_xs()
                                 .text_color(p.text3)
                                 .child(rtl_prose(t("Videos you watch in Stream Tube then show in your YouTube history, and your phone and TV resume them where you stopped. The window uses its own empty profile, which is deleted afterwards."), cx)),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(p.text3)
+                                .child(rtl_prose(t("If Google says the browser or app may not be secure, use a cookies.txt file exported from a browser where you're signed in."), cx)),
                         ),
                 )
                 .child(
@@ -1790,6 +1849,10 @@ impl AppView {
             && !matches!(route, Route::Watch { .. } | Route::Shorts(_))
         {
             exit_fullscreen(window, cx);
+        }
+        // youtube.com empties the search box when you go back to Home
+        if route == Route::Home && !self.search.read(cx).value().is_empty() {
+            self.search.update(cx, |s, cx| s.set_value("", window, cx));
         }
         let page = build_page(&route, window, cx);
         let old_route = std::mem::replace(&mut self.route, route);
@@ -2499,6 +2562,7 @@ impl AppView {
         }
         use crate::downloads::{self, JobStatus};
         let p = pal(cx);
+        let radius = rems(0.375 * thumbnail_corner_scale());
         let mut jobs = cx
             .try_global::<downloads::Downloads>()
             .map(|d| d.jobs.lock().clone())
@@ -2607,13 +2671,14 @@ impl AppView {
                         .flex_none()
                         .w(px(72.))
                         .h(px(40.))
-                        .rounded_md()
+                        .rounded(radius)
                         .overflow_hidden()
                         .bg(p.chip)
                         .child(
                             img(j.video.thumbnail.clone())
                                 .size_full()
-                                .rounded_md()
+                                .aspect_ratio(72. / 40.)
+                                .rounded(radius)
                                 .object_fit(ObjectFit::Cover),
                         ),
                 )
@@ -2900,6 +2965,13 @@ impl AppView {
                 cx.notify();
                 return;
             }
+            // the player's gear menu, like youtube.com: Esc closes it and stays on the video
+            if self.main_view.update(cx, |v, cx| v.close_menu(cx))
+                || self.mini_view.update(cx, |v, cx| v.close_menu(cx))
+            {
+                cx.notify();
+                return;
+            }
             if search_focused {
                 self.show_suggestions = false;
                 window.focus(&self.focus, cx);
@@ -3069,12 +3141,6 @@ impl AppView {
                     pl.seek_interactive(dur * n / 10.0);
                     true
                 }
-                ("p", true) => {
-                    if let Some(i) = pl.queue_pos.filter(|i| *i > 0) {
-                        pl.play_queue_index(i - 1, cx);
-                    }
-                    true
-                }
                 ("a", false) => {
                     let a = !pl.audio_only;
                     pl.set_audio_only(a, cx);
@@ -3124,6 +3190,7 @@ impl AppView {
                 }
             }
             ("n", true) => play_next(window, cx),
+            ("p", true) => play_previous(window, cx),
             _ => {}
         }
     }
@@ -3934,7 +4001,7 @@ impl AppView {
     }
 
     fn render_mini_player(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if crate::ui::pip::owner(cx).as_ref() == Some(&player(cx)) {
+        if crate::ui::pip::owner(cx).as_ref() == Some(&player(cx)) || super::music::on(cx) {
             return None;
         }
         let p = pal(cx);
@@ -3968,12 +4035,15 @@ impl AppView {
                 .right(px(right))
                 .bottom(px(bottom))
                 .w(px(w))
-                .rounded_xl()
+                .rounded(crate::player::view::mini_player_radius())
                 .overflow_hidden()
                 .bg(p.surface2)
                 .shadow_2xl()
                 .border_1()
                 .border_color(p.border)
+                // the cards under the mini player must not get its clicks and hovers
+                // (a click on the video opened the video beneath it instead)
+                .occlude()
                 // the video itself is drawn over this slot by `Shell`
                 .child(div().w_full().h(px(h)).child(crate::ui::slot::slot_canvas(
                     cx.global::<crate::ui::slot::MiniSlot>().0.clone(),
@@ -4550,11 +4620,14 @@ impl AppView {
                     .gap_1()
                     .child(
                         div()
-                            .text_base()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(p.text)
+                            .flex()
+                            .items_center()
                             .pb_2()
-                            .child(t("Save video to…")),
+                            .child(div().flex_1().text_base().font_weight(FontWeight::SEMIBOLD).text_color(p.text).child(t("Save video to…")))
+                            .child(icon_button("dlg-save-close", "x", cx).on_click(cx.listener(|this, _, _, cx| {
+                                this.dialog = None;
+                                cx.notify();
+                            }))),
                     )
                     .children(pls.into_iter().map(|pl| {
                         let contains = store::playlist_contains(pl.id, &v.id);
@@ -4569,22 +4642,9 @@ impl AppView {
                             .rounded_md()
                             .cursor_pointer()
                             .hover(move |s| s.bg(p.hover))
-                            .child(
-                                icon(if contains { "square-check" } else { "square" })
-                                    .text_color(p.text),
-                            )
-                            .child(div().flex_1().text_sm().text_color(p.text).child(
-                                if pl.protected {
-                                    t(&pl.name).to_string()
-                                } else {
-                                    pl.name.clone()
-                                },
-                            ))
-                            .child(
-                                icon(if pl.protected { "lock" } else { "globe-lock" })
-                                    .size_4()
-                                    .text_color(p.text3),
-                            )
+                            .child(icon(if contains { "square-check" } else { "square" }).text_color(p.text))
+                            .child(div().flex_1().text_sm().text_color(p.text).child(if pl.protected { t(&pl.name).to_string() } else { pl.name.clone() }))
+                            .child(icon(if pl.protected { "lock" } else { "globe-lock" }).size_4().text_color(p.text3))
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 if store::playlist_contains(pl.id, &v2.id) {
                                     store::playlist_remove(pl.id, &v2.id);
@@ -4599,24 +4659,14 @@ impl AppView {
                     .when(crate::api::auth::signed_in(), |d| {
                         let favorite = self.yt_playlists.as_deref().and_then(account_favorites);
                         let rows: Vec<AnyElement> = match &self.yt_playlists {
-                            None => vec![
-                                div()
-                                    .py_2()
-                                    .px_2()
-                                    .text_sm()
-                                    .text_color(p.text2)
-                                    .child(t("Loading your YouTube playlists…"))
-                                    .into_any_element(),
-                            ],
+                            None => vec![div().py_2().px_2().text_sm().text_color(p.text2).child(t("Loading your YouTube playlists…")).into_any_element()],
                             Some(list) => list
                                 .iter()
-                                .filter(|pl| {
-                                    pl.id != "LL"
-                                        && favorite.is_none_or(|favorite| pl.id != favorite.id)
-                                })
+                                .filter(|pl| pl.id != "LL" && favorite.is_none_or(|favorite| pl.id != favorite.id))
                                 .map(|pl| {
-                                    let (pid, name, vid) =
-                                        (pl.id.clone(), pl.title.clone(), v.id.clone());
+                                    let (pid, name, vid) = (pl.id.clone(), pl.title.clone(), v.id.clone());
+                                    let state = self.yt_saved.get(&(pid.clone(), vid.clone())).copied();
+                                    let (saved, pending) = state.unwrap_or((false, false));
                                     div()
                                         .id(SharedString::from(format!("dlg-yt-{}", pl.id)))
                                         .flex_row_dir(cx)
@@ -4627,33 +4677,40 @@ impl AppView {
                                         .rounded_md()
                                         .cursor_pointer()
                                         .hover(move |s| s.bg(p.hover))
-                                        .child(icon("list-plus").text_color(p.text))
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .text_sm()
-                                                .text_color(p.text)
-                                                .truncate()
-                                                .child(pl.title.clone()),
-                                        )
+                                        .child(icon(if pending { "loader" } else if saved { "square-check" } else { "square" }).text_color(p.text))
+                                        .child(div().flex_1().text_sm().text_color(p.text).truncate().child(pl.title.clone()))
                                         .child(icon("list-video").size_4().text_color(p.text3))
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            let (pid, name, vid) =
-                                                (pid.clone(), name.clone(), vid.clone());
-                                            cx.spawn(async move |_, cx| {
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if pending {
+                                                return;
+                                            }
+                                            // a second click removes it again, like youtube.com's checkboxes (#268)
+                                            let save = !saved;
+                                            let key = (pid.clone(), vid.clone());
+                                            this.yt_saved.insert(key.clone(), (saved, true));
+                                            cx.notify();
+                                            let (pid, name, vid) = (pid.clone(), name.clone(), vid.clone());
+                                            cx.spawn(async move |this, cx| {
                                                 let res = blocking(move || {
-                                                    crate::api::auth::add_to_playlist(&pid, &vid)
+                                                    if save {
+                                                        crate::api::auth::add_to_playlist(&pid, &vid)
+                                                    } else {
+                                                        crate::api::auth::remove_many_from_playlist(&pid, &[vid])
+                                                    }
                                                 })
                                                 .await;
-                                                cx.update(|cx| match res {
-                                                    Ok(()) => toast(
-                                                        cx,
-                                                        tf!("Saved to playlist “{0}”", name),
-                                                    ),
-                                                    Err(_) => toast(
-                                                        cx,
-                                                        t("Couldn't save to that YouTube playlist"),
-                                                    ),
+                                                let _ = this.update(cx, |this, cx| {
+                                                    match res {
+                                                        Ok(()) => {
+                                                            this.yt_saved.insert(key, (save, false));
+                                                            toast(cx, if save { tf!("Saved to playlist “{0}”", name) } else { tf!("Removed from {0}", name) });
+                                                        }
+                                                        Err(_) => {
+                                                            this.yt_saved.insert(key, (saved, false));
+                                                            toast(cx, t("Couldn't save to that YouTube playlist"));
+                                                        }
+                                                    }
+                                                    cx.notify();
                                                 });
                                             })
                                             .detach();
@@ -4662,62 +4719,25 @@ impl AppView {
                                 })
                                 .collect(),
                         };
-                        d.child(
-                            div()
-                                .pt_3()
-                                .pb_1()
-                                .px_2()
-                                .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(p.text2)
-                                .child(t("Your YouTube playlists")),
-                        )
-                        .when_some(
-                            self.favorite_membership
-                                .as_ref()
-                                .filter(|f| f.video == v.id),
-                            |d, favorite| {
+                        d.child(div().pt_3().pb_1().px_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(p.text2).child(t("Your YouTube playlists")))
+                            .when_some(self.favorite_membership.as_ref().filter(|f| f.video == v.id), |d, favorite| {
                                 let pending = favorite.pending;
                                 let contains = favorite.contains;
-                                d.child(
-                                    div()
-                                        .id("dlg-account-favorites")
-                                        .flex_row_dir(cx)
-                                        .items_center()
-                                        .gap_3()
-                                        .py_2()
-                                        .px_2()
-                                        .rounded_md()
-                                        .child(
-                                            icon(match (pending, contains) {
-                                                (true, _) => "loader",
-                                                (false, Some(true)) => "square-check",
-                                                (false, Some(false)) => "square",
-                                                (false, None) => "refresh-cw",
-                                            })
-                                            .text_color(p.text),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .text_sm()
-                                                .text_color(p.text)
-                                                .child(t("Favorites")),
-                                        )
-                                        .when(!pending, |row| {
-                                            row.cursor_pointer()
-                                                .hover(move |s| s.bg(p.hover))
-                                                .on_click(cx.listener(move |a, _, _, cx| {
-                                                    a.update_favorite_membership(
-                                                        contains.map(|saved| !saved),
-                                                        cx,
-                                                    )
-                                                }))
-                                        }),
-                                )
-                            },
-                        )
-                        .children(rows)
+                                d.child(div()
+                                    .id("dlg-account-favorites")
+                                    .flex_row_dir(cx).items_center().gap_3().py_2().px_2().rounded_md()
+                                    .child(icon(match (pending, contains) {
+                                        (true, _) => "loader",
+                                        (false, Some(true)) => "square-check",
+                                        (false, Some(false)) => "square",
+                                        (false, None) => "refresh-cw",
+                                    }).text_color(p.text))
+                                    .child(div().flex_1().text_sm().text_color(p.text).child(t("Favorites")))
+                                    .when(!pending, |row| row.cursor_pointer().hover(move |s| s.bg(p.hover)).on_click(
+                                        cx.listener(move |a, _, _, cx| a.update_favorite_membership(contains.map(|saved| !saved), cx)),
+                                    )))
+                            })
+                            .children(rows)
                     })
                     .child(
                         div()
@@ -4732,12 +4752,7 @@ impl AppView {
                             .cursor_pointer()
                             .hover(move |s| s.bg(p.hover))
                             .child(icon("plus").text_color(p.text))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(p.text)
-                                    .child(t("Create new playlist")),
-                            )
+                            .child(div().text_sm().text_color(p.text).child(t("Create new playlist")))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 let v3 = v.clone();
                                 this.dialog = None;
@@ -4746,17 +4761,11 @@ impl AppView {
                                 // window.defer, not defer_in: prompt_text updates this same
                                 // AppView, which defer_in would still be holding (a crash)
                                 window.defer(cx, move |window, cx| {
-                                    prompt_text(
-                                        "New playlist",
-                                        "Playlist name",
-                                        window,
-                                        cx,
-                                        move |name, _, cx| {
-                                            let id = store::playlist_create(&name);
-                                            store::playlist_add(id, &v4);
-                                            toast(cx, tf!("Saved to playlist “{0}”", name));
-                                        },
-                                    );
+                                    prompt_text("New playlist", "Playlist name", window, cx, move |name, _, cx| {
+                                        let id = store::playlist_create(&name);
+                                        store::playlist_add(id, &v4);
+                                        toast(cx, tf!("Saved to playlist “{0}”", name));
+                                    });
                                 });
                             })),
                     )
@@ -5131,6 +5140,10 @@ impl Render for AppView {
                         .children(sidebar)
                         .child(page_area.flex_1().min_w_0().h_full()),
                 );
+            // Shorts keep their own player
+            if super::music::on(cx) && !is_shorts {
+                root = root.child(self.music_bar.clone());
+            }
             {
                 // a smaller window keeps the mini player on screen
                 let vp = window.viewport_size();
@@ -5146,7 +5159,7 @@ impl Render for AppView {
         root = root
             .children(self.render_menu(cx))
             .children(self.render_dialog(cx))
-            .child(deferred(self.render_toasts(cx)));
+            .child(deferred(self.render_toasts(cx)).with_priority(5));
         root
     }
 }
@@ -5425,7 +5438,8 @@ pub fn refresh_all_pages(cx: &mut App) {
     };
     let ids: Vec<EntityId> = {
         let a = app.read(cx);
-        std::iter::once(a.page.entity_id())
+        [a.page.entity_id(), a.mini_view.entity_id()]
+            .into_iter()
             .chain(a.history.iter().map(|(_, v)| v.entity_id()))
             .chain(a.forward.iter().map(|(_, v)| v.entity_id()))
             .chain(a.tabs.iter().flat_map(|tab| {

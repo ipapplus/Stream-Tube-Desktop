@@ -50,6 +50,13 @@ pub struct PageScroll {
     handle: ScrollHandle,
 }
 
+impl PageScroll {
+    pub fn flex_col(mut self) -> Self {
+        self.inner = self.inner.flex().flex_col();
+        self
+    }
+}
+
 impl ParentElement for PageScroll {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.inner.extend(elements)

@@ -14,6 +14,8 @@ pub struct ChannelPage {
     data: Load<ChannelPage0>,
     tab: usize,
     tab_items: Load<Vec<Item>>,
+    /// Latest / Popular / Oldest over the grid, like youtube.com
+    sort_chips: Vec<crate::api::types::SortChip>,
     continuation: Option<String>,
     loading_more: bool,
     scroll: ScrollHandle,
@@ -65,6 +67,7 @@ impl ChannelPage {
             data: Load::Loading,
             tab: 0,
             tab_items: Load::Loading,
+            sort_chips: Vec::new(),
             continuation: None,
             loading_more: false,
             scroll: ScrollHandle::new(),
@@ -98,6 +101,7 @@ impl ChannelPage {
                         this.tab = tabs.iter().position(|t| t.kind == "videos").unwrap_or(0);
                         this.tab_items = Load::Ready(cp.page.items);
                         this.continuation = cp.page.continuation;
+                        this.sort_chips = cp.sort_chips;
                         if store::is_subscribed(&cp.info.id) {
                             store::subscribe(&cp.info.id, &cp.info.name, cp.info.avatar.as_deref());
                         }
@@ -123,6 +127,7 @@ impl ChannelPage {
         self.tab = idx;
         self.searching = None;
         self.tab_items = Load::Loading;
+        self.sort_chips.clear();
         self.continuation = None;
         self.serial += 1;
         let serial = self.serial;
@@ -137,6 +142,58 @@ impl ChannelPage {
                     Ok(cp) => {
                         this.tab_items = Load::Ready(cp.page.items);
                         this.continuation = cp.page.continuation;
+                        this.sort_chips = cp.sort_chips;
+                    }
+                    Err(e) => this.tab_items = Load::Error(e.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Reloads the tab sorted by the chip at `idx`.
+    fn select_sort(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(token) = self
+            .sort_chips
+            .get(idx)
+            .filter(|c| !c.selected)
+            .map(|c| c.token.clone())
+        else {
+            return;
+        };
+        for (i, c) in self.sort_chips.iter_mut().enumerate() {
+            c.selected = i == idx;
+        }
+        self.tab_items = Load::Loading;
+        self.continuation = None;
+        self.serial += 1;
+        let serial = self.serial;
+        let info = self.data.ready().map(|d| d.info.clone());
+        cx.spawn(async move |this, cx| {
+            let res = blocking(move || innertube::browse_continue(&token)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.serial != serial {
+                    return;
+                }
+                match res {
+                    Ok(mut p) => {
+                        if let Some(info) = &info {
+                            for it in p.items.iter_mut() {
+                                if let Item::Video(v) = it {
+                                    if v.channel_name.is_empty() {
+                                        v.channel_name = info.name.clone();
+                                    }
+                                    v.channel_id.get_or_insert(info.id.clone());
+                                    if v.channel_avatar.is_none() {
+                                        v.channel_avatar = info.avatar.clone();
+                                    }
+                                }
+                            }
+                        }
+                        this.tab_items = Load::Ready(p.items);
+                        this.continuation = p.continuation;
                     }
                     Err(e) => this.tab_items = Load::Error(e.to_string()),
                 }
@@ -460,6 +517,26 @@ impl Render for ChannelPage {
                         .gap_4()
                         .child(header)
                         .child(tabs)
+                        .when(
+                            self.searching.is_none() && !self.sort_chips.is_empty(),
+                            |d| {
+                                d.child(div().flex().gap_3().children(
+                                    self.sort_chips.iter().enumerate().map(|(i, c)| {
+                                        chip(
+                                            SharedString::from(format!("ch-sort-{i}")),
+                                            c.title.clone(),
+                                            c.selected,
+                                            cx,
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.select_sort(i, cx)
+                                            }),
+                                        )
+                                    }),
+                                ))
+                            },
+                        )
                         .child(body),
                 ),
             )

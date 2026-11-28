@@ -173,6 +173,16 @@ pub struct ChannelPage {
     pub banner: Option<String>,
     pub tabs: Vec<ChannelTab>,
     pub page: Page,
+    /// the tab's sort chips (Latest, Popular, Oldest), each with the
+    /// continuation that loads the tab sorted that way
+    pub sort_chips: Vec<SortChip>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SortChip {
+    pub title: String,
+    pub token: String,
+    pub selected: bool,
 }
 
 #[derive(Clone, Debug, Default)]

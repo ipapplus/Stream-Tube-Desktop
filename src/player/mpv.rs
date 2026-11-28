@@ -145,9 +145,8 @@ struct Fns {
     initialize: unsafe extern "C" fn(*mut mpv_handle) -> c_int,
     terminate_destroy: unsafe extern "C" fn(*mut mpv_handle),
     set_option_string: unsafe extern "C" fn(*mut mpv_handle, *const c_char, *const c_char) -> c_int,
-    set_property_string:
-        unsafe extern "C" fn(*mut mpv_handle, *const c_char, *const c_char) -> c_int,
-    set_property: unsafe extern "C" fn(*mut mpv_handle, *const c_char, c_int, *mut c_void) -> c_int,
+    set_property_async:
+        unsafe extern "C" fn(*mut mpv_handle, u64, *const c_char, c_int, *mut c_void) -> c_int,
     get_property: unsafe extern "C" fn(*mut mpv_handle, *const c_char, c_int, *mut c_void) -> c_int,
     command: unsafe extern "C" fn(*mut mpv_handle, *mut *const c_char) -> c_int,
     command_async: unsafe extern "C" fn(*mut mpv_handle, u64, *mut *const c_char) -> c_int,
@@ -271,8 +270,7 @@ fn open_library(candidates: impl IntoIterator<Item = PathBuf>) -> Result<(Librar
                         initialize: sym!("mpv_initialize"),
                         terminate_destroy: sym!("mpv_terminate_destroy"),
                         set_option_string: sym!("mpv_set_option_string"),
-                        set_property_string: sym!("mpv_set_property_string"),
-                        set_property: sym!("mpv_set_property"),
+                        set_property_async: sym!("mpv_set_property_async"),
                         get_property: sym!("mpv_get_property"),
                         command: sym!("mpv_command"),
                         command_async: sym!("mpv_command_async"),
@@ -896,12 +894,21 @@ impl Mpv {
         }
     }
 
+    // async, like `command`: setting properties from the UI never waits on mpv's
+    // dispatch lock while the core thread is opening or tearing down a stream
     pub fn set(&self, name: &str, value: &str) {
         if let Ok((_, f)) = lib() {
             let n = CString::new(name).unwrap_or_default();
             let v = CString::new(value).unwrap_or_default();
+            let mut p: *const c_char = v.as_ptr();
             unsafe {
-                (f.set_property_string)(self.h.0, n.as_ptr(), v.as_ptr());
+                (f.set_property_async)(
+                    self.h.0,
+                    0,
+                    n.as_ptr(),
+                    MPV_FORMAT_STRING,
+                    &mut p as *mut *const c_char as *mut c_void,
+                );
             }
         }
     }
@@ -910,8 +917,9 @@ impl Mpv {
         if let Ok((_, f)) = lib() {
             let n = CString::new(name).unwrap_or_default();
             unsafe {
-                (f.set_property)(
+                (f.set_property_async)(
                     self.h.0,
+                    0,
                     n.as_ptr(),
                     MPV_FORMAT_DOUBLE,
                     &mut value as *mut f64 as *mut c_void,
@@ -925,8 +933,9 @@ impl Mpv {
             let n = CString::new(name).unwrap_or_default();
             let mut v: c_int = value as c_int;
             unsafe {
-                (f.set_property)(
+                (f.set_property_async)(
                     self.h.0,
+                    0,
                     n.as_ptr(),
                     MPV_FORMAT_FLAG,
                     &mut v as *mut c_int as *mut c_void,

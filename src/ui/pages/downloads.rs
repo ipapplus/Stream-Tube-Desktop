@@ -23,6 +23,7 @@ impl Render for DownloadsPage {
         let jobs = cx.default_global::<Downloads>().jobs.lock().clone();
         let dir = store::settings_snapshot().download_dir.clone();
         let ytdlp = crate::api::streams::ytdlp_path().is_some();
+        let radius = rems(0.5 * thumbnail_corner_scale());
         let mut list = div().flex().flex_col().gap_3();
         for j in jobs.iter().rev() {
             let id = j.id;
@@ -60,9 +61,13 @@ impl Render for DownloadsPage {
                     .child(
                         div()
                             .id(SharedString::from(format!("dlt-{id}")))
+                            .flex_none()
+                            .w(px(160.))
+                            .h(px(90.))
+                            .overflow_hidden()
                             .cursor_pointer()
                             .on_click(move |_, window, cx| navigate(Route::Watch { id: vid.clone(), playlist: None, start: None }, window, cx))
-                            .child(img(SharedString::from(j.video.thumbnail.clone())).w(px(160.)).h(px(90.)).rounded_lg().object_fit(ObjectFit::Cover)),
+                            .child(img(SharedString::from(j.video.thumbnail.clone())).size_full().aspect_ratio(16. / 9.).rounded(radius).object_fit(ObjectFit::Cover)),
                     )
                     .child(
                         div()

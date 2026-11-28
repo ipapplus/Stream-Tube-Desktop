@@ -185,6 +185,60 @@ pub fn local_pass(url: &str) -> String {
     format!("{}/p/{id}", p.base())
 }
 
+/// Serves normalized VOD captions, falling back to the original track.
+pub(super) fn local_caption(url: &str) -> String {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return url.to_string();
+    }
+    let Some(p) = proxy() else {
+        return url.to_string();
+    };
+    let id = register(p, url, None, "text/vtt");
+    format!("{}/c/{id}.vtt", p.base())
+}
+
+// mpv can probe and reopen the same caption track; keep its ranges consistent.
+fn caption_body(id: u64, url: &str) -> Option<Arc<[u8]>> {
+    type CaptionCache = VecDeque<(u64, Arc<[u8]>)>;
+    static CACHE: Mutex<CaptionCache> = Mutex::new(VecDeque::new());
+    const MAX_CACHE: usize = 32 * 1024 * 1024;
+    if let Some(body) = CACHE
+        .lock()
+        .iter()
+        .find(|(key, _)| *key == id)
+        .map(|(_, body)| body.clone())
+    {
+        return Some(body);
+    }
+    let raw = crate::api::http::get_bytes(url, &[]).ok()?;
+    let bytes = std::str::from_utf8(&raw)
+        .ok()
+        .and_then(super::captions::render_webvtt)
+        .map(String::into_bytes)
+        .unwrap_or(raw);
+    let body: Arc<[u8]> = bytes.into();
+    if body.len() <= MAX_CACHE {
+        let mut cache = CACHE.lock();
+        // Another probe may have cached the track during the fetch.
+        if let Some(old) = cache
+            .iter()
+            .find(|(key, _)| *key == id)
+            .map(|(_, body)| body.clone())
+        {
+            return Some(old);
+        }
+        let mut size = cache.iter().map(|(_, b)| b.len()).sum::<usize>() + body.len();
+        while cache.len() >= 16 || size > MAX_CACHE {
+            let Some((_, old)) = cache.pop_front() else {
+                break;
+            };
+            size -= old.len();
+        }
+        cache.push_back((id, body.clone()));
+    }
+    Some(body)
+}
+
 pub(super) fn hls_attr(line: &str, key: &str) -> Option<String> {
     // match KEY= at an attribute boundary (so AUDIO= doesn't hit "VIDEO-RANGE=..."-like names)
     let mut search = line;
@@ -534,31 +588,7 @@ fn serve_pass(
             return conn.flush();
         }
     }
-    let mut resp = None;
-    for attempt in 0..3u64 {
-        if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(300 * attempt));
-        }
-        let mut req = agent()
-            .get(url)
-            .header("User-Agent", crate::api::http::BROWSER_UA);
-        let rg;
-        if let Some((a, b)) = range {
-            rg = match b {
-                Some(b) => format!("bytes={a}-{b}"),
-                None => format!("bytes={a}-"),
-            };
-            req = req.header("Range", &rg);
-        }
-        match req.call() {
-            Ok(r) if r.status().as_u16() < 400 => {
-                resp = Some(r);
-                break;
-            }
-            _ => continue,
-        }
-    }
-    let Some(r) = resp else {
+    let Some(r) = open_pass(url, range) else {
         conn.write_all(
             b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         )?;
@@ -583,6 +613,16 @@ fn serve_pass(
     let length = hdr("content-length");
     let can_have_body = status >= 200 && status != 204 && status != 304;
     let chunked = length.is_none() && can_have_body;
+    // where a resumed request has to end: YouTube refuses open-ended ranges
+    let (start, end) = range.unwrap_or((0, None));
+    let end = end.or_else(|| {
+        length
+            .as_deref()?
+            .parse::<u64>()
+            .ok()
+            .filter(|l| *l > 0)
+            .map(|l| start + l - 1)
+    });
     if let Some(l) = length {
         head.push_str(&format!("Content-Length: {l}\r\n"));
     } else if chunked {
@@ -597,28 +637,86 @@ fn serve_pass(
         return Ok(());
     }
     let mut body = r.into_body().into_reader();
-    if chunked {
-        // ureq exposes the decoded body. Give libavformat an explicit end of
-        // segment while still forwarding bytes as soon as they arrive.
-        let mut buf = [0; 32 * 1024];
-        let mut writer = std::io::BufWriter::with_capacity(buf.len() + 32, conn);
-        loop {
-            let n = match body.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            };
+    let mut sent = 0u64;
+    let mut resumes = 0;
+    let mut buf = [0; 32 * 1024];
+    let mut writer = std::io::BufWriter::with_capacity(buf.len() + 32, conn);
+    loop {
+        let n = match body.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            // The upstream read failed part-way, typically because mpv paused with
+            // a full cache and stopped reading until the agent's body timeout (a
+            // total budget) ran out. A cut-off segment corrupts the picture until
+            // the video is reloaded, so carry on from the same byte instead.
+            Err(e) => {
+                if crate::perf::on() {
+                    eprintln!("[proxy] segment read error after {sent} bytes: {e}");
+                }
+                resumes += 1;
+                if resumes > 5 {
+                    return Err(e);
+                }
+                let Some(r) = open_pass(url, Some((start + sent, end))) else {
+                    return Err(e);
+                };
+                let whole = r.status().as_u16() == 200;
+                body = r.into_body().into_reader();
+                if whole {
+                    // the server ignored the range: skip what mpv already has
+                    let skip = start + sent;
+                    if std::io::copy(&mut (&mut body).take(skip), &mut std::io::sink())? < skip {
+                        return Err(e);
+                    }
+                }
+                continue;
+            }
+        };
+        if chunked {
+            // ureq exposes the decoded body. Give libavformat an explicit end of
+            // segment while still forwarding bytes as soon as they arrive.
             write!(writer, "{n:x}\r\n")?;
             writer.write_all(&buf[..n])?;
             writer.write_all(b"\r\n")?;
-            writer.flush()?;
+        } else {
+            writer.write_all(&buf[..n])?;
         }
-        writer.write_all(b"0\r\n\r\n")?;
-        return writer.flush();
+        writer.flush()?;
+        sent += n as u64;
     }
-    std::io::copy(&mut body, conn)?;
-    conn.flush()
+    if chunked {
+        writer.write_all(b"0\r\n\r\n")?;
+    }
+    writer.flush()
+}
+
+/// Requests `url` (optionally a byte range), retrying a few times on errors.
+fn open_pass(
+    url: &str,
+    range: Option<(u64, Option<u64>)>,
+) -> Option<ureq::http::Response<ureq::Body>> {
+    for attempt in 0..3u64 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(300 * attempt));
+        }
+        let mut req = agent()
+            .get(url)
+            .header("User-Agent", crate::api::http::BROWSER_UA);
+        let rg;
+        if let Some((a, b)) = range {
+            rg = match b {
+                Some(b) => format!("bytes={a}-{b}"),
+                None => format!("bytes={a}-"),
+            };
+            req = req.header("Range", &rg);
+        }
+        match req.call() {
+            Ok(r) if r.status().as_u16() < 400 => return Some(r),
+            _ => continue,
+        }
+    }
+    None
 }
 
 pub(super) fn agent() -> ureq::Agent {
@@ -712,6 +810,24 @@ fn serve(mut conn: TcpStream) -> std::io::Result<()> {
                 param("avc") == Some("1"),
             ),
             None => conn.write_all(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ),
+        };
+    }
+    if let Some(rest) = path.strip_prefix("/c/") {
+        let id = rest
+            .strip_suffix(".vtt")
+            .and_then(|s| s.parse::<u64>().ok());
+        let url = id.and_then(|id| p.streams.lock().get(&id).map(|e| e.url.clone()));
+        return match (id, url) {
+            (Some(id), Some(url)) => match caption_body(id, &url) {
+                Some(body) => {
+                    super::captions::write_http_response(&mut conn, &body, range, method == "HEAD")
+                }
+                // A failed normalization fetch should not disable captions.
+                None => serve_pass(&mut conn, &url, range, method == "HEAD"),
+            },
+            _ => conn.write_all(
                 b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             ),
         };
@@ -1017,5 +1133,164 @@ mod live_proxy_tests {
             let bare = url.replacen(&format!("/{}", p.token), "", 1);
             assert_eq!(get(&bare).0, 403);
         }
+    }
+
+    fn text(url: &str) -> String {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .into();
+        agent
+            .get(url)
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap()
+    }
+
+    /// A 4K video (VID overrides it): its segments are bigger than the socket
+    /// buffers, so a reader that stops part-way also stops the upstream read.
+    fn hls_4k_master() -> (String, String) {
+        let id = std::env::var("VID").unwrap_or_else(|_| "LXb3EKWsInQ".into());
+        let info = crate::api::streams::get_streams(&id).unwrap();
+        (
+            id,
+            super::local_hls(info.hls_url.as_deref().expect("an HLS stream"), 2160, None),
+        )
+    }
+
+    /// A reader that pauses part-way through a segment for longer than the
+    /// upstream body timeout still gets the whole segment.
+    #[test]
+    #[ignore = "network, ~45 s"]
+    fn hls_segment_survives_a_paused_reader() {
+        let (id, master) = hls_4k_master();
+        let variant = text(&master)
+            .lines()
+            .filter(|l| l.contains("/h/"))
+            .last()
+            .expect("variant")
+            .to_string();
+        let seg = text(&variant)
+            .lines()
+            .filter(|l| l.contains("/p/"))
+            .nth(3)
+            .expect("segment")
+            .to_string();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let full = agent
+            .get(&seg)
+            .call()
+            .unwrap()
+            .body_mut()
+            .with_config()
+            .limit(256 << 20)
+            .read_to_vec()
+            .unwrap();
+        assert!(
+            full.len() > 8 << 20,
+            "segment too small to block the proxy: {}",
+            full.len()
+        );
+        let mut r = agent.get(&seg).call().unwrap().into_body().into_reader();
+        let mut slow = vec![0u8; 64 * 1024];
+        r.read_exact(&mut slow).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(40));
+        let rest = r.read_to_end(&mut slow);
+        eprintln!(
+            "{id}: segment {} bytes, paused read got {} ({rest:?})",
+            full.len(),
+            slow.len()
+        );
+        assert!(slow == full, "the paused read lost part of the segment");
+    }
+
+    /// End to end: mpv pauses for longer than the upstream body timeout while its
+    /// cache is full (so mid-segment), then plays on. The picture must keep going.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "network, macOS libmpv, ~90 s"]
+    fn mpv_plays_on_after_a_long_pause() {
+        use std::time::{Duration, Instant};
+        let (id, master) = hls_4k_master();
+        let log =
+            std::env::temp_dir().join(format!("streamtube-pause-test-{}.log", std::process::id()));
+        let frames = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = frames.clone();
+        let mpv = crate::player::mpv::Mpv::new(
+            &[
+                ("vo", "libmpv"),
+                ("ao", "null"),
+                ("hwdec", "auto-copy"),
+                ("config", "no"),
+                ("keep-open", "yes"),
+                ("cache", "yes"),
+                ("demuxer-max-bytes", "48MiB"),
+                ("demuxer-readahead-secs", "40"),
+                ("network-timeout", "20"),
+                ("log-file", log.to_str().unwrap()),
+            ],
+            move |ev| {
+                if matches!(ev, crate::player::mpv::MpvEvent::Frame) {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            },
+        )
+        .expect("libmpv");
+        mpv.set_render_size(64, 36);
+        mpv.command_sync(&["loadfile", &master]).unwrap();
+        let time = || {
+            mpv.get_string("time-pos")
+                .and_then(|t| t.parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
+        let until = |secs: f64, limit: u64| {
+            let end = Instant::now() + Duration::from_secs(limit);
+            while time() < secs && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            time()
+        };
+        assert!(until(3.0, 60) >= 3.0, "playback did not start");
+        mpv.set("pause", "yes");
+        std::thread::sleep(Duration::from_secs(45));
+        let paused_at = time();
+        let before = frames.load(std::sync::atomic::Ordering::Relaxed);
+        mpv.set("pause", "no");
+        // play well past what the cache held when the pause began
+        let reached = until(paused_at + 45.0, 120);
+        let after = frames.load(std::sync::atomic::Ordering::Relaxed) - before;
+        drop(mpv);
+        let log_text = std::fs::read_to_string(&log).unwrap_or_default();
+        let broken = log_text
+            .lines()
+            .filter(|l| {
+                l.contains("Error while decoding")
+                    || l.contains("Invalid frame marker")
+                    || l.contains("video EOF")
+            })
+            .count();
+        eprintln!(
+            "{id}: paused at {paused_at:.1}s, reached {reached:.1}s, {after} frames after resuming, {broken} decode-error/EOF lines, log {}",
+            log.display()
+        );
+        assert!(
+            reached >= paused_at + 45.0,
+            "playback stopped at {reached:.1}s"
+        );
+        assert_eq!(
+            broken,
+            0,
+            "the video broke after the pause, see {}",
+            log.display()
+        );
+        assert!(
+            after > 45 * 20,
+            "only {after} video frames in 45 s after resuming"
+        );
     }
 }
