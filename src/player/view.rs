@@ -1662,11 +1662,12 @@ impl PlayerView {
         });
 
         let pp = self.player.clone();
-        let ctl_btn = |id: &'static str, name: &str| {
+        let ctl_btn = |id: &'static str, name: &str, label: &str| {
             div()
                 .id(id)
                 .role(Role::Button)
                 .accessibility_id(id)
+                .aria_label(translate(label).to_owned())
                 .flex()
                 .flex_none()
                 .items_center()
@@ -1710,7 +1711,12 @@ impl PlayerView {
             .items_center()
             .gap_1()
             .child(
-                ctl_btn("c-play", if paused { "play" } else { "pause" }).on_click({
+                ctl_btn(
+                    "c-play",
+                    if paused { "play" } else { "pause" },
+                    if paused { "Play" } else { "Pause" },
+                )
+                .on_click({
                     let pp = pp.clone();
                     move |_, _, cx| {
                         pp.update(cx, |p, cx| {
@@ -1722,8 +1728,8 @@ impl PlayerView {
             )
             .when(has_next, |d| {
                 let playback = self.player.clone();
-                d.child(
-                    ctl_btn("c-next", "skip-forward").on_click(move |_, window, cx| {
+                d.child(ctl_btn("c-next", "skip-forward", "Next video").on_click(
+                    move |_, window, cx| {
                         if crate::player::controller::player(cx) == playback {
                             crate::ui::app::play_next(window, cx);
                         } else {
@@ -1733,8 +1739,8 @@ impl PlayerView {
                                 }
                             });
                         }
-                    }),
-                )
+                    },
+                ))
             })
             .child(
                 div()
@@ -1749,15 +1755,18 @@ impl PlayerView {
                             cx.notify();
                         }
                     }))
-                    .child(ctl_btn("c-mute", vol_icon).on_click({
-                        let pp = pp.clone();
-                        move |_, _, cx| {
-                            pp.update(cx, |p, cx| {
-                                p.toggle_mute();
-                                cx.notify()
-                            })
-                        }
-                    }))
+                    .child(
+                        ctl_btn("c-mute", vol_icon, if muted { "Unmute" } else { "Mute" })
+                            .on_click({
+                                let pp = pp.clone();
+                                move |_, _, cx| {
+                                    pp.update(cx, |p, cx| {
+                                        p.toggle_mute();
+                                        cx.notify()
+                                    })
+                                }
+                            }),
+                    )
                     .when(vol_open, |d| {
                         d.child(
                             div()
@@ -1894,6 +1903,13 @@ impl PlayerView {
                 d.child(
                     div()
                         .id("c-autoplay")
+                        .role(Role::Button)
+                        .accessibility_id("c-autoplay")
+                        .aria_label(translate(if on {
+                            "Autoplay is on"
+                        } else {
+                            "Autoplay is off"
+                        }))
                         .flex()
                         .flex_none()
                         .items_center()
@@ -1946,6 +1962,9 @@ impl PlayerView {
                 d.child(
                     div()
                         .id("c-cc-none")
+                        .role(Role::Button)
+                        .accessibility_id("c-cc-none")
+                        .aria_label(translate("Subtitles/closed captions unavailable"))
                         .flex()
                         .flex_none()
                         .items_center()
@@ -1973,6 +1992,7 @@ impl PlayerView {
                         } else {
                             "captions-off"
                         },
+                        "Subtitles/CC",
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         let caption = this.player.read(cx).caption;
@@ -1986,35 +2006,41 @@ impl PlayerView {
                 )
             })
             .child(
-                ctl_btn("c-settings", "settings").on_click(cx.listener(|this, _, _, cx| {
-                    // a mouse-down here already closed an open menu (outside click); don't reopen it
-                    let just_closed =
-                        this.menu_closed_at.elapsed() < std::time::Duration::from_millis(400);
-                    this.menu = if this.menu.is_some() || just_closed {
-                        None
-                    } else {
-                        Some(Menu::Main)
-                    };
-                    cx.notify();
-                })),
+                ctl_btn("c-settings", "settings", "Settings").on_click(cx.listener(
+                    |this, _, _, cx| {
+                        // a mouse-down here already closed an open menu (outside click); don't reopen it
+                        let just_closed =
+                            this.menu_closed_at.elapsed() < std::time::Duration::from_millis(400);
+                        this.menu = if this.menu.is_some() || just_closed {
+                            None
+                        } else {
+                            Some(Menu::Main)
+                        };
+                        cx.notify();
+                    },
+                )),
             )
             .when(!self.pip && !narrow, |d| {
                 d.child(
-                    ctl_btn("c-pip", "picture-in-picture").on_click(|_, window, cx| {
-                        if store::settings_snapshot().pip_always_on_top {
-                            crate::ui::app::exit_fullscreen(window, cx);
-                            crate::ui::pip::open(cx);
-                        } else {
-                            crate::ui::app::go_back_keep_playing(window, cx);
-                        }
-                    }),
+                    ctl_btn("c-pip", "picture-in-picture", "Miniplayer").on_click(
+                        |_, window, cx| {
+                            if store::settings_snapshot().pip_always_on_top {
+                                crate::ui::app::exit_fullscreen(window, cx);
+                                crate::ui::pip::open(cx);
+                            } else {
+                                crate::ui::app::go_back_keep_playing(window, cx);
+                            }
+                        },
+                    ),
                 )
             })
             .when(!ui.fullscreen && !self.pip && !narrow, |d| {
                 d.child(
-                    ctl_btn("c-theater", "rectangle-horizontal").on_click(|_, _, cx| {
-                        crate::ui::app::toggle_theater_mode(cx);
-                    }),
+                    ctl_btn("c-theater", "rectangle-horizontal", "Theater mode").on_click(
+                        |_, _, cx| {
+                            crate::ui::app::toggle_theater_mode(cx);
+                        },
+                    ),
                 )
             })
             .when(!self.pip, |d| {
@@ -2025,6 +2051,11 @@ impl PlayerView {
                             "minimize"
                         } else {
                             "maximize"
+                        },
+                        if ui.fullscreen {
+                            "Exit full screen"
+                        } else {
+                            "Fullscreen"
                         },
                     )
                     .on_click(|_, window, cx| {
@@ -2515,7 +2546,7 @@ impl PlayerView {
                 }
                 // last, like youtube.com: the best the video offers, showing what plays now
                 let auto = if cur == 0 && playing > 0 {
-                    tf!("Auto ({0}p)", playing)
+                    tf!("Auto ({0})", format_args!("{playing}p"))
                 } else {
                     translate("Auto").to_string()
                 };

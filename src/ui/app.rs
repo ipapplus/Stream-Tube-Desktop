@@ -945,9 +945,6 @@ pub struct AppView {
     preview_view: Entity<crate::player::preview::PreviewView>,
     /// bounded cache for every thumbnail and avatar in this window
     images: Entity<crate::ui::image_cache::LruImageCache>,
-    /// the playing video as the shell shows it (mini player title), so the shell
-    /// re-renders only when that changes, never for a video frame
-    shown_video: Option<(String, String, String)>,
     /// sidebar lists read from the database, refreshed when `store::generation` moves
     sidebar_cache: Option<SidebarData>,
     last_bounds_save: std::time::Instant,
@@ -1250,7 +1247,6 @@ impl AppView {
             player_observer,
             preview_view,
             images,
-            shown_video: None,
             sidebar_cache: None,
             last_bounds_save: std::time::Instant::now(),
             dialog: None,

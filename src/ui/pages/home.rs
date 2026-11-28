@@ -657,6 +657,9 @@ impl Render for HomePage {
                     on,
                     cx,
                 )
+                .role(Role::Button)
+                .accessibility_id("chip-music-mode")
+                .aria_label(t(if on { "Leave music mode" } else { "Music mode" }))
                 .on_click(move |_, _, cx| crate::ui::music::set(!on, cx)),
             );
         }

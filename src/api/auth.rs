@@ -287,11 +287,7 @@ pub fn tv_call(endpoint: &str, body: Value) -> Result<Value> {
     tv_call_for_session(endpoint, body, None)
 }
 
-fn tv_call_for_session(
-    endpoint: &str,
-    mut body: Value,
-    session: Option<&Arc<()>>,
-) -> Result<Value> {
+fn tv_call_for_session(endpoint: &str, body: Value, session: Option<&Arc<()>>) -> Result<Value> {
     anyhow::ensure!(
         session.is_none_or(is_current_session),
         "YouTube account changed"

@@ -6,7 +6,8 @@
 use crate::i18n::t as translate;
 use crate::player::controller::{Player, PlayerHandle, player};
 use crate::ui::app::{Route, navigate};
-use crate::ui::{icon, pal, toast_with_actions};
+use crate::ui::widgets::rtl_prose;
+use crate::ui::{LogicalStyledExt, icon, pal, toast_with_actions};
 use gpui_kit::*;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -195,6 +196,7 @@ impl MusicBar {
 fn button(
     id: &'static str,
     name: &'static str,
+    label: &'static str,
     size: Pixels,
     color: Hsla,
     cx: &App,
@@ -202,6 +204,9 @@ fn button(
     let p = pal(cx);
     div()
         .id(id)
+        .role(Role::Button)
+        .accessibility_id(id)
+        .aria_label(translate(label))
         .flex()
         .flex_none()
         .items_center()
@@ -230,6 +235,9 @@ impl Render for MusicBar {
         let track = self.track.clone();
         let progress = div()
             .id("music-progress")
+            .role(Role::Slider)
+            .accessibility_id("music-progress")
+            .aria_label(translate("Seek"))
             .absolute()
             .top(px(-6.))
             .left_0()
@@ -273,13 +281,21 @@ impl Render for MusicBar {
             .gap_1()
             .flex_none()
             .child(
-                button("music-prev", "skip-back", px(20.), p.text, cx)
-                    .on_click(|_, window, cx| crate::ui::app::play_previous(window, cx)),
+                button(
+                    "music-prev",
+                    "skip-back",
+                    "Previous video",
+                    px(20.),
+                    p.text,
+                    cx,
+                )
+                .on_click(|_, window, cx| crate::ui::app::play_previous(window, cx)),
             )
             .child(
                 button(
                     "music-play",
                     if shown.paused { "play" } else { "pause" },
+                    if shown.paused { "Play" } else { "Pause" },
                     px(28.),
                     p.text,
                     cx,
@@ -295,6 +311,7 @@ impl Render for MusicBar {
                 button(
                     "music-next",
                     "skip-forward",
+                    "Next video",
                     px(20.),
                     if shown.can_next { p.text } else { p.text3 },
                     cx,
@@ -315,7 +332,10 @@ impl Render for MusicBar {
             .is_some_and(|a| matches!(a.read(cx).route, Route::Watch { .. }));
         let info = div()
             .id("music-now")
-            .flex()
+            .role(Role::Button)
+            .accessibility_id("music-now")
+            .aria_label(translate("Now playing"))
+            .flex_row_dir(cx)
             .min_w_0()
             .items_center()
             .gap_3()
@@ -353,23 +373,24 @@ impl Render for MusicBar {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.text)
                             .truncate()
-                            .child(title),
+                            .child(rtl_prose(title, cx)),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(p.text2)
                             .truncate()
-                            .child(channel),
+                            .child(rtl_prose(channel, cx)),
                     ),
             );
         // like / dislike, as on the watch page: kept here and sent to the signed-in account
         let rating = crate::store::rating(&id);
-        let rate = |button_id: &'static str, name: &'static str, value: i8| {
+        let rate = |button_id: &'static str, name: &'static str, label: &'static str, value: i8| {
             let id = id.clone();
             button(
                 button_id,
                 name,
+                label,
                 px(20.),
                 if rating == value { p.accent } else { p.text2 },
                 cx,
@@ -384,7 +405,7 @@ impl Render for MusicBar {
             }))
         };
         let now_playing = div()
-            .flex()
+            .flex_row_dir(cx)
             .flex_1()
             .min_w_0()
             .items_center()
@@ -395,8 +416,8 @@ impl Render for MusicBar {
                 div()
                     .flex()
                     .flex_none()
-                    .child(rate("music-like", "thumbs-up", 1))
-                    .child(rate("music-dislike", "thumbs-down", -1)),
+                    .child(rate("music-like", "thumbs-up", "Like", 1))
+                    .child(rate("music-dislike", "thumbs-down", "Dislike", -1)),
             );
 
         let extras = div()
@@ -408,6 +429,11 @@ impl Render for MusicBar {
                 button(
                     "music-loop",
                     if shown.looping { "repeat-1" } else { "repeat" },
+                    if shown.looping {
+                        "Loop: on"
+                    } else {
+                        "Loop: off"
+                    },
                     px(18.),
                     if shown.looping { p.accent } else { p.text2 },
                     cx,
@@ -421,18 +447,21 @@ impl Render for MusicBar {
                 }),
             )
             .child(
-                button("music-shuffle", "shuffle", px(18.), p.text2, cx).on_click(|_, _, cx| {
-                    player(cx).update(cx, |p, cx| {
-                        if p.queue.len() > 1 {
-                            p.shuffle_queue(cx);
-                        }
-                    })
-                }),
+                button("music-shuffle", "shuffle", "Shuffle", px(18.), p.text2, cx).on_click(
+                    |_, _, cx| {
+                        player(cx).update(cx, |p, cx| {
+                            if p.queue.len() > 1 {
+                                p.shuffle_queue(cx);
+                            }
+                        })
+                    },
+                ),
             )
             .child(
                 button(
                     "music-mute",
                     if shown.muted { "volume-x" } else { "volume-2" },
+                    if shown.muted { "Unmute" } else { "Mute" },
                     px(18.),
                     p.text2,
                     cx,
@@ -453,6 +482,7 @@ impl Render for MusicBar {
                     } else {
                         "chevron-up"
                     },
+                    if on_watch { "Back" } else { "Now playing" },
                     px(20.),
                     p.text,
                     cx,
@@ -475,7 +505,8 @@ impl Render for MusicBar {
                 }),
             )
             .child(
-                button("music-exit", "x", px(16.), p.text3, cx).on_click(|_, _, cx| set(false, cx)),
+                button("music-exit", "x", "Leave music mode", px(16.), p.text3, cx)
+                    .on_click(|_, _, cx| set(false, cx)),
             );
 
         div()
@@ -485,7 +516,7 @@ impl Render for MusicBar {
             .w_full()
             .h(px(BAR_HEIGHT))
             .px_4()
-            .flex()
+            .flex_row_dir(cx)
             .items_center()
             .gap_4()
             .bg(p.surface)

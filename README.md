@@ -11,8 +11,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0078D6" alt="Windows and Linux">
-  <img src="https://img.shields.io/github/v/release/Avaneesh-Inamdar/Stream-Tube-Desktop?include_prereleases&sort=semver&label=release" alt="Latest release">
-  <a href="https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop/releases"><img src="https://img.shields.io/github/downloads/Avaneesh-Inamdar/Stream-Tube-Desktop/total?label=downloads&color=FF0033&cacheSeconds=3600" alt="Total downloads"></a>
+  <img src="https://img.shields.io/github/v/release/ipapplus/Stream-Tube-Desktop?include_prereleases&sort=semver&label=release" alt="Latest release">
+  <a href="https://github.com/ipapplus/Stream-Tube-Desktop/releases"><img src="https://img.shields.io/github/downloads/ipapplus/Stream-Tube-Desktop/total?label=downloads&color=FF0033&cacheSeconds=3600" alt="Total downloads"></a>
   <img src="https://img.shields.io/badge/built%20with-Rust-B7410E" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license">
 </p>
@@ -156,7 +156,7 @@ goes through libmpv, so it starts fast and scrolls smoothly even with big feeds.
 
 ## Install
 
-Get the latest build from the [Releases page](https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop/releases).
+Get the latest build from the [Releases page](https://github.com/ipapplus/Stream-Tube-Desktop/releases).
 This is an early alpha, so expect rough edges.
 
 **Windows 10/11 (64-bit)**: run `StreamTube-<version>-setup.exe`. It installs for
@@ -218,22 +218,22 @@ You can also install them with your package manager instead.
 
 ### Arabic Windows Edition
 
-The `ipapplus` personal fork provides a Windows x64 build with an Arabic
-interface, RTL navigation and player menus, mixed Arabic/Latin text rendering,
-and localized counts. See the [edition documentation](ARABIC-WINDOWS-EDITION.md)
-and download the runtime ZIP from the
-[Arabic Windows release](https://github.com/ipapplus/Stream-Tube-Desktop/releases/tag/v0.7.5-alpha-arabic.1).
-This fork release is separate from the original distribution described above.
+The personal fork integrates Stream Tube 1.0.0 with an Arabic interface, RTL
+navigation and player menus, DirectWrite Arabic shaping on Windows, and localized
+counts. The in-app updater uses this fork's releases. Find the Windows x64
+installer and ZIP on the [Arabic Windows release](https://github.com/ipapplus/Stream-Tube-Desktop/releases/tag/v1.0.0).
+See the [edition documentation](ARABIC-WINDOWS-EDITION.md) and the
+[original upstream project](https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop).
 
 ### Verifying a download
 
-Every file on an upstream release is built by the public [Release workflow](.github/workflows/release.yml)
+Every file on a tagged release is built by the public [Release workflow](.github/workflows/release.yml)
 on GitHub's runners. Each release lists the files' SHA-256 checksums in `SHA256SUMS.txt`,
 and each file has a signed build provenance attestation that ties it to the workflow
 run that built it. With the [GitHub CLI](https://cli.github.com):
 
 ```sh
-gh attestation verify StreamTube-1.0.0-setup.exe --repo Avaneesh-Inamdar/Stream-Tube-Desktop
+gh attestation verify StreamTube-1.0.0-setup.exe --repo ipapplus/Stream-Tube-Desktop
 ```
 
 Check a download against those before running it. The in-app updater also checks
@@ -254,7 +254,7 @@ You need:
 Then:
 
 ```powershell
-git clone https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop.git
+git clone https://github.com/ipapplus/Stream-Tube-Desktop.git
 cd Stream-Tube-Desktop
 cargo build --release
 ```

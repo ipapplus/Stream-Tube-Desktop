@@ -1,10 +1,10 @@
 # Arabic Windows Edition
 
-Stream Tube Desktop **0.7.5-alpha** Arabic Windows Edition is a **Windows 10/11 x64** build from the `ipapplus` fork of Stream Tube Desktop. It adds an Arabic (`ar`) interface and right-to-left (RTL) layout to the existing Rust/GPUI application. This is a personal fork release; the original project distributes its own builds separately.
+Stream Tube Desktop **1.0.0** Arabic Windows Edition is a **Windows 10/11 x64** build from the `ipapplus` fork of Stream Tube Desktop. It integrates upstream Stream Tube 1.0.0 with an Arabic (`ar`) interface and right-to-left (RTL) layout.
 
 ## Arabic localization
 
-Arabic is registered as an application language and selects RTL layout when it is active. The Arabic catalog contains **929 keys**. Against the first audit baseline, the follow-up added **15** keys, corrected **24**, and removed **none**. Changes cover navigation, player presets, settings descriptions, and feedback messages. The catalog keeps product names such as Stream Tube, FFmpeg, yt-dlp, and libmpv in their original form. Titles, account names, comments, and other user-generated text retain their original language.
+Arabic is registered as an application language and selects RTL layout when it is active. The Arabic catalog contains **962 keys**, including 33 additions for the 1.0.0 integration. The additions cover music, captions, settings, channel sorting, playlist actions, and player accessibility. The catalog keeps product names such as Stream Tube, FFmpeg, yt-dlp, and libmpv in their original form. Titles, account names, comments, and other user-generated text retain their original language.
 
 Regression tests validate Arabic catalog parsing, placeholder compatibility, directional isolation, and count formatting. Untranslated interface strings fall back to the source text.
 
@@ -30,26 +30,18 @@ The formatter does not guess the meaning of strings such as episode labels. Some
 
 The player gear menu and its quality, playback-speed, caption, aspect-ratio, equalizer, and audio submenus use direction-aware rows and submenu indicators. The transcript caption picker follows the same layout rules. The equalizer presets, screenshot actions, and external-player options use localized interface labels; technical identifiers retain their original spelling. The changes apply to presentation and accessibility, while existing playback and media-control actions retain their semantics.
 
-## Verification
+## Release and installation
 
-| Check | Result |
-| --- | --- |
-| `cargo fmt --check` | Passed |
-| `cargo build --release --locked` | Passed; 20 compiler warnings |
-| `cargo test --release --locked -q` | 127 passed, 0 failed, 28 ignored |
-| `cargo test --release --locked -q -p gpui-pre-windows` | 22 passed, 0 failed |
-| `git -c core.safecrlf=false diff --check` | Passed |
-| Follow-up GUI checks A–F | Passed as recorded in the audit, with scope and evidence in the [follow-up report](docs/rtl-audit/public/follow-up-report.md) |
+The [1.0.0 Arabic Windows release](https://github.com/ipapplus/Stream-Tube-Desktop/releases/tag/v1.0.0)
+provides a per-user x64 installer and a ZIP that runs after extraction. Keep
+`libmpv-2.dll` beside `streamtube.exe` and the Vulkan fallback loader in the
+`vulkan` subdirectory. The ZIP has a marker for updating an extracted copy.
+The app uses the shared profile by default. Set `STREAMTUBE_DATA_DIR` before
+launch if you need a separate profile.
 
-The [initial audit](docs/rtl-audit/public/report.md) checked Settings and Watch at **1366×768** and **1920×1080**, each at **100%, 125%, and 150%** Windows display scaling. The full display matrix was not repeated for the follow-up.
-
-The locked release build produced `streamtube.exe` with SHA-256 `DD150993E9B27B1322ECF142DDC3A4184E964FDDB3CEB5219502C8CC3E809ED5`.
-
-## Installation and limitations
-
-Extract the Windows runtime ZIP and run `streamtube.exe` from the extracted folder. Keep `libmpv-2.dll` beside the executable and the Vulkan fallback loader in its `vulkan` subdirectory. The executable-only download requires the same runtime files. The app's existing in-app updater is tied to the original project; obtain Arabic edition updates from the fork's release page.
-
-Manual clipboard testing of raw values and paths, account-only operations, multi-monitor per-monitor DPI, and non-Windows runtime behavior were outside the audit. The runtime ZIP does not create a separate data profile by default.
+The updater selects the fork's Windows setup asset and checks its SHA-256
+before running it. The [previous publication report](PUBLICATION-REPORT.md)
+and [display matrix](docs/rtl-audit/public/report.md) document 0.7.5-alpha.
 
 ## Screenshots
 

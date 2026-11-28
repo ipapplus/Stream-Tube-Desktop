@@ -592,7 +592,8 @@ fn ytdlp_run(
             Some(n) => dir.join(format!("{n}.%(ext)s")),
             None => dir.join("%(title).150B [%(id)s].%(ext)s"),
         })
-        .args(["--print", "after_move:filepath"])
+        // JSON escapes characters that yt-dlp can omit when printing a plain path.
+        .args(["--print", "after_move:[file] %(filepath)j"])
         .arg(url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -648,8 +649,10 @@ fn ytdlp_run(
                     )
                 };
                 progress(overall.min(0.99), &detail);
-            } else if !line.starts_with('[') && !line.trim().is_empty() {
-                final_path = line.trim().to_string();
+            } else if let Some(value) = line.strip_prefix("[file] ")
+                && let Ok(path) = serde_json::from_str::<String>(value)
+            {
+                final_path = path;
             }
         }
         let status = child.wait()?;

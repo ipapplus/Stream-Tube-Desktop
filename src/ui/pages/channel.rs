@@ -520,14 +520,16 @@ impl Render for ChannelPage {
                         .when(
                             self.searching.is_none() && !self.sort_chips.is_empty(),
                             |d| {
-                                d.child(div().flex().gap_3().children(
+                                d.child(div().flex_row_dir(cx).gap_3().children(
                                     self.sort_chips.iter().enumerate().map(|(i, c)| {
                                         chip(
                                             SharedString::from(format!("ch-sort-{i}")),
-                                            c.title.clone(),
+                                            t(&c.title).to_owned(),
                                             c.selected,
                                             cx,
                                         )
+                                        .role(Role::Button)
+                                        .aria_label(t(&c.title).to_owned())
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.select_sort(i, cx)

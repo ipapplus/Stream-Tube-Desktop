@@ -356,7 +356,8 @@ mod tests {
             let Some(catalog) = language.catalog() else {
                 continue;
             };
-            let messages = catalog.messages();
+            let messages = parse_catalog(catalog.source)
+                .unwrap_or_else(|error| panic!("{}: {error}", language.code()));
             for &source in &reference {
                 assert!(
                     messages.contains_key(source),
@@ -364,7 +365,7 @@ mod tests {
                     language.code()
                 );
             }
-            for (source, translated) in messages {
+            for (source, translated) in &messages {
                 assert!(
                     !translated.trim().is_empty(),
                     "{}: {source}",

@@ -8,12 +8,8 @@ use gpui_kit::*;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const REPO: &str = "Avaneesh-Inamdar/Stream-Tube-Desktop";
-/// Where release files may come from. The project is moving to the StreamTubeProject
-/// organization; once it has, GitHub serves the files from there, so versions from
-/// before the move have to accept both places to keep updating.
-const RELEASE_REPOS: [&str; 2] = [REPO, "StreamTubeProject/Stream-Tube-Desktop"];
-pub const RELEASES_PAGE: &str = "https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop/releases";
+const REPO: &str = "ipapplus/Stream-Tube-Desktop";
+pub const RELEASES_PAGE: &str = "https://github.com/ipapplus/Stream-Tube-Desktop/releases";
 
 #[derive(Clone, Debug)]
 pub struct Release {
@@ -32,7 +28,7 @@ pub struct Asset {
     pub url: String,
     pub size: u64,
     /// SHA-256 that GitHub reports for the file (lowercase hex)
-    pub sha256: Option<String>,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -94,40 +90,36 @@ pub fn is_newer(tag: &str, current: &str) -> bool {
     parse_version(tag) > parse_version(current)
 }
 
-fn pick_asset(assets: &[Value]) -> Option<Asset> {
-    let want = |name: &str| {
-        let n = name.to_ascii_lowercase();
-        if cfg!(windows) {
-            n.ends_with(".exe") && n.contains("setup")
-        } else {
-            n.contains("linux") && (n.ends_with(".tar.gz") || n.ends_with(".appimage"))
-        }
-    };
+fn pick_asset(tag: &str, assets: &[Value]) -> Option<Asset> {
+    let version = tag.strip_prefix('v')?;
+    let filename = format!("StreamTube-{version}-setup.exe");
     assets.iter().find_map(|a| {
         let name = a.get("name")?.as_str()?;
-        if !want(name) {
+        let want = if cfg!(windows) {
+            name == filename
+        } else {
+            name.contains("linux") && (name.ends_with(".tar.gz") || name.ends_with(".AppImage"))
+        };
+        if !want
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        {
             return None;
         }
         let url = a.get("browser_download_url")?.as_str()?;
-        // only files of this project's releases, saved under a plain file name
-        let plain = !name.is_empty() && !name.contains(['/', '\\', ':']) && !name.starts_with('.');
-        let ours = RELEASE_REPOS
-            .iter()
-            .any(|repo| url.starts_with(&format!("https://github.com/{repo}/releases/download/")));
-        if !plain || !ours {
+        if url != format!("{RELEASES_PAGE}/download/{tag}/{name}") {
             return None;
         }
-        let sha256 = a
-            .get("digest")
-            .and_then(Value::as_str)
-            .and_then(|d| d.strip_prefix("sha256:"))
-            .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
-            .map(str::to_ascii_lowercase);
+        let hash = a.get("digest")?.as_str()?.strip_prefix("sha256:")?;
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
         Some(Asset {
             name: name.to_string(),
             url: url.to_string(),
             size: a.get("size").and_then(Value::as_u64).unwrap_or(0),
-            sha256,
+            sha256: hash.to_ascii_lowercase(),
         })
     })
 }
@@ -160,7 +152,19 @@ pub fn check() -> Result<Option<Release>> {
     let newest = list
         .iter()
         .filter(|r| !r.get("draft").and_then(Value::as_bool).unwrap_or(false))
-        .filter_map(|r| Some((r.get("tag_name")?.as_str()?.to_string(), r)))
+        .filter_map(|r| {
+            let tag = r.get("tag_name")?.as_str()?.strip_prefix('v')?;
+            let core = tag.split('-').next()?;
+            if core.split('.').count() != 3
+                || !core.split('.').all(|part| part.parse::<u64>().is_ok())
+                || !tag
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-.".contains(&b))
+            {
+                return None;
+            }
+            Some((format!("v{tag}"), r))
+        })
         .max_by(|a, b| parse_version(&a.0).cmp(&parse_version(&b.0)));
     let Some((tag, r)) = newest else {
         return Ok(None);
@@ -178,9 +182,8 @@ pub fn check() -> Result<Option<Release>> {
         name: Some(s("name"))
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| tag.clone()),
-        tag,
         notes: s("body"),
-        page: s("html_url"),
+        page: format!("{RELEASES_PAGE}/tag/{tag}"),
         prerelease: r
             .get("prerelease")
             .and_then(Value::as_bool)
@@ -188,7 +191,8 @@ pub fn check() -> Result<Option<Release>> {
         asset: r
             .get("assets")
             .and_then(Value::as_array)
-            .and_then(|a| pick_asset(a)),
+            .and_then(|a| pick_asset(&tag, a)),
+        tag,
     }))
 }
 
@@ -320,13 +324,7 @@ pub fn install(cx: &mut App) {
                 anyhow::bail!("the download is incomplete");
             }
             // the installer runs only if it is exactly the file GitHub has on the release
-            let Some(want) = sha256 else {
-                let _ = std::fs::remove_file(&path);
-                anyhow::bail!(
-                    "GitHub gave no checksum for the installer. Download it from the releases page"
-                );
-            };
-            if file_sha256(&path)? != want {
+            if file_sha256(&path)? != sha256 {
                 let _ = std::fs::remove_file(&path);
                 anyhow::bail!("the download doesn't match the release's checksum");
             }
@@ -438,44 +436,30 @@ mod tests {
     }
 
     #[test]
-    fn assets_come_from_this_repo_with_a_checksum() {
-        let ext = if cfg!(windows) {
-            "setup.exe"
+    fn assets_come_from_the_arabic_fork_with_a_checksum() {
+        let tag = "v1.0.0";
+        let good = if cfg!(windows) {
+            "StreamTube-1.0.0-setup.exe"
         } else {
-            "linux-x86_64.tar.gz"
+            "StreamTube-1.0.0-linux-x86_64.tar.gz"
         };
-        let asset = |name: &str, url: &str| serde_json::json!({ "name": name, "browser_download_url": url, "size": 5, "digest": format!("sha256:{}", "AB".repeat(32)) });
-        let good = format!("StreamTube-1.0.0-{ext}");
-        let ok = pick_asset(&[asset(
-            &good,
-            &format!(
-                "https://github.com/{}/releases/download/v1.0.0/{good}",
-                super::REPO
-            ),
-        )])
-        .unwrap();
-        assert_eq!(ok.sha256.as_deref(), Some("ab".repeat(32).as_str()));
-        // another repository, or a name that is a path
-        assert!(
-            pick_asset(&[asset(
-                &good,
-                &format!("https://github.com/someone/else/releases/download/v1.0.0/{good}")
-            )])
-            .is_none()
-        );
-        assert!(
-            pick_asset(&[asset(
-                &format!("..\\{good}"),
-                &format!(
-                    "https://github.com/{}/releases/download/v1.0.0/x",
-                    super::REPO
-                )
-            )])
-            .is_none()
-        );
-        // the organization the project is moving to, but not names that only start the same
-        assert!(pick_asset(&[asset(&good, &format!("https://github.com/StreamTubeProject/Stream-Tube-Desktop/releases/download/v1.0.0/{good}"))]).is_some());
-        assert!(pick_asset(&[asset(&good, &format!("https://github.com/StreamTubeProject/Stream-Tube-Desktop-fork/releases/download/v1.0.0/{good}"))]).is_none());
-        assert!(pick_asset(&[asset(&good, &format!("https://github.com/StreamTubeProjectX/Stream-Tube-Desktop/releases/download/v1.0.0/{good}"))]).is_none());
+        let official_url = format!("{}/download/{tag}/{good}", super::RELEASES_PAGE);
+        let asset = |name: &str, url: &str, digest: serde_json::Value| serde_json::json!({ "name": name, "browser_download_url": url, "size": 5, "digest": digest });
+        let digest = serde_json::json!(format!("sha256:{}", "AB".repeat(32)));
+        let ok = pick_asset(tag, &[asset(good, &official_url, digest.clone())]).unwrap();
+        assert_eq!(ok.sha256, "ab".repeat(32));
+        for repo in [
+            "Avaneesh-Inamdar/Stream-Tube-Desktop",
+            "StreamTubeProject/Stream-Tube-Desktop",
+            "ipapplus/Stream-Tube-Desktop-fork",
+        ] {
+            let url = format!("https://github.com/{repo}/releases/download/{tag}/{good}");
+            assert!(pick_asset(tag, &[asset(good, &url, digest.clone())]).is_none());
+        }
+        assert!(pick_asset("v1.0.1", &[asset(good, &official_url, digest.clone())]).is_none());
+        assert!(pick_asset(tag, &[asset(&format!("../{good}"), &official_url, digest)]).is_none());
+        for invalid in [serde_json::Value::Null, serde_json::json!("sha256:wrong")] {
+            assert!(pick_asset(tag, &[asset(good, &official_url, invalid)]).is_none());
+        }
     }
 }

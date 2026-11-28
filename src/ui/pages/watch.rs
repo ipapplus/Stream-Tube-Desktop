@@ -2416,6 +2416,8 @@ impl WatchPage {
             let active = m.video == video;
             div()
                 .id(label)
+                .role(Role::Button)
+                .aria_label(translate(label))
                 .px_4()
                 .py_1()
                 .rounded_full()
@@ -2432,12 +2434,12 @@ impl WatchPage {
                 .on_click(move |_, _, cx| music::set_video(video, cx))
         };
         let toggle = div()
-            .flex()
+            .flex_row_dir(cx)
             .items_center()
             .gap_3()
             .child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .gap_1()
                     .p_1()
                     .rounded_full()
@@ -2491,14 +2493,14 @@ impl WatchPage {
                             .font_weight(FontWeight::BOLD)
                             .text_color(p.text)
                             .truncate()
-                            .child(title),
+                            .child(rtl_prose(title, cx)),
                     )
                     .child(
                         div()
                             .text_base()
                             .text_color(p.text2)
                             .truncate()
-                            .child(channel),
+                            .child(rtl_prose(channel, cx)),
                     ),
             );
 
@@ -2528,7 +2530,9 @@ impl WatchPage {
                 list = list.child(
                     div()
                         .id(("music-q", i))
-                        .flex()
+                        .role(Role::Button)
+                        .aria_label(v.title.clone())
+                        .flex_row_dir(cx)
                         .items_center()
                         .gap_3()
                         .px_2()
@@ -2574,21 +2578,23 @@ impl WatchPage {
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(p.text)
                                         .truncate()
-                                        .child(v.title.clone()),
+                                        .child(rtl_prose(v.title.clone(), cx)),
                                 )
                                 .child(
                                     div()
                                         .text_sm()
                                         .text_color(p.text2)
                                         .truncate()
-                                        .child(v.channel_name.clone()),
+                                        .child(rtl_prose(v.channel_name.clone(), cx)),
                                 ),
                         )
-                        .children(
-                            v.duration_text
-                                .clone()
-                                .map(|d| div().flex_none().text_sm().text_color(p.text2).child(d)),
-                        ),
+                        .children(v.duration_text.clone().map(|d| {
+                            div()
+                                .flex_none()
+                                .text_sm()
+                                .text_color(p.text2)
+                                .child(crate::i18n::isolate_ltr(d))
+                        })),
                 );
             }
         } else if let Some(w) = self.info.ready().cloned() {
@@ -2605,7 +2611,7 @@ impl WatchPage {
             .flex_none()
             .child(
                 div()
-                    .flex()
+                    .flex_row_dir(cx)
                     .pb_2()
                     .mb_3()
                     .border_b_1()
@@ -2630,7 +2636,7 @@ impl WatchPage {
                         div()
                             .text_xs()
                             .text_color(p.text2)
-                            .child(translate("Playing from").to_string()),
+                            .child(rtl_prose(translate("Playing from"), cx)),
                     )
                     .child(
                         div()
@@ -2638,13 +2644,13 @@ impl WatchPage {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.text)
                             .truncate()
-                            .child(source),
+                            .child(rtl_prose(source, cx)),
                     ),
             )
             .child(list);
         div()
             .size_full()
-            .flex()
+            .flex_row_dir(cx)
             .justify_center()
             .gap_12()
             .px_6()

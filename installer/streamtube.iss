@@ -16,8 +16,8 @@ AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=Avaneesh Inamdar
 AppPublisherURL=https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop
-AppSupportURL=https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop/issues
-AppUpdatesURL=https://github.com/Avaneesh-Inamdar/Stream-Tube-Desktop/releases
+AppSupportURL=https://github.com/ipapplus/Stream-Tube-Desktop/issues
+AppUpdatesURL=https://github.com/ipapplus/Stream-Tube-Desktop/releases
 ; per-user install: no admin prompt, and the in-app updater can replace files
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\{#AppName}
